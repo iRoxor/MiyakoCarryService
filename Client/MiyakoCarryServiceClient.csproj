@@ -13,7 +13,7 @@
     <AssemblyCompany>Himesamanoyume</AssemblyCompany>
     <AssemblyProduct>MiyakoCarryServiceClient</AssemblyProduct>  
     <AssemblyCopyright>Copyright © 姫様の夢 2025 - 2026</AssemblyCopyright> 
-    <Version>1.1.4.0</Version>
+    <Version>1.1.4.100</Version>
     <AssemblyTitle>MiyakoCarryServiceClient</AssemblyTitle>
     <Trademark>https://sp-mod.com/mod/2709/miyako-carry-service</Trademark>
     <RootNamespace>MiyakoCarryService.Client</RootNamespace>
@@ -50,27 +50,7 @@
     <Reference Include="UnityEngine.InputLegacyModule" HintPath="..\Ref\UnityEngine.InputLegacyModule.dll" Private="false" />
     <Reference Include="UnityEngine.TextRenderingModule" HintPath="..\Ref\UnityEngine.TextRenderingModule.dll" Private="false" />
     <Reference Include="UnityEngine.UI" HintPath="..\Ref\UnityEngine.UI.dll" Private="false" />
+    <Reference Include="SAIN" HintPath="..\Ref\SAIN.dll" Private="false" />
+    <Reference Include="SAIN.Preset.Shared" HintPath="..\Ref\SAIN.Preset.Shared.dll" Private="false" />
   </ItemGroup>
-  <Target Name="PostBuild" AfterTargets="PostBuildEvent">  
-    <!-- Debug 构建 -->
-    <Exec Command="if exist &quot;$(DevGamePluginsMcsPath)\$(TargetFileName)&quot; del /f /q &quot;$(DevGamePluginsMcsPath)\$(TargetFileName)&quot;" Condition="'$(Configuration)' == 'Debug'" />
-    <Exec Command="if exist &quot;$(DevGamePluginsMcsPath)\$(TargetName).pdb&quot; del /f /q &quot;$(DevGamePluginsMcsPath)\$(TargetName).pdb&quot;" Condition="'$(Configuration)' == 'Debug'" />
-    
-    <Exec Command="mkdir &quot;$(DevGameScriptsMcsPath)&quot;" Condition="!Exists('$(DevGameScriptsMcsPath)')" />
-    <Exec Command="copy &quot;$(TargetPath)&quot; &quot;$(DevGameScriptsMcsPath)\$(TargetFileName)&quot;" Condition="'$(Configuration)' == 'Debug'" />
-    <Exec Command="copy &quot;$(TargetDir)$(TargetName).pdb&quot; &quot;$(DevGameScriptsMcsPath)\$(TargetName).pdb&quot;" Condition="'$(Configuration)' == 'Debug' and Exists('$(TargetDir)$(TargetName).pdb')" />
-
-    <!-- Release 构建 -->
-    <Exec Command="if exist &quot;$(DevGameScriptsMcsPath)\$(TargetFileName)&quot; del /f /q &quot;$(DevGameScriptsMcsPath)\$(TargetFileName)&quot;" Condition="'$(Configuration)' == 'Release'" />
-    <Exec Command="if exist &quot;$(DevGameScriptsMcsPath)\$(TargetName).pdb&quot; del /f /q &quot;$(DevGameScriptsMcsPath)\$(TargetName).pdb&quot;" Condition="'$(Configuration)' == 'Release'" />
-    
-    <Exec Command="mkdir &quot;$(DevGamePluginsMcsPath)&quot;" Condition="!Exists('$(DevGamePluginsMcsPath)')" />
-    <Exec Command="copy &quot;$(TargetPath)&quot; &quot;$(DevGamePluginsMcsPath)\$(TargetFileName)&quot;" Condition="'$(Configuration)' == 'Release'" />
-
-    <!-- 共通 -->
-    <Exec Command="mkdir &quot;$(DevHeadlessGamePluginsMcsPath)&quot;" Condition="!Exists('$(DevHeadlessGamePluginsMcsPath)')" />
-    <Exec Command="copy &quot;$(TargetPath)&quot; &quot;$(DevHeadlessGamePluginsMcsPath)\$(TargetFileName)&quot;" />
-    <Exec Command="mkdir &quot;$(BuildMcsPath)&quot;" Condition="!Exists('$(BuildMcsPath)')" />
-    <Exec Command="copy &quot;$(TargetPath)&quot; &quot;$(BuildMcsPath)\$(TargetFileName)&quot;" />
-  </Target> 
 </Project>

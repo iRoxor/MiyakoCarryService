@@ -245,7 +245,7 @@ namespace MiyakoCarryService.Client.Utils
 
             foreach (var layerName in GetBrainLayerNames(botOwner))
             {
-                if (keepNames.Contains(layerName))
+                if (keepNames.Contains(layerName) || MiyakoCarryService.Client.C2Sain.C2Gate.ShouldKeepLayer(layerName))
                 {
                     continue;
                 }

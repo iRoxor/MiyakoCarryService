@@ -60,6 +60,8 @@ namespace MiyakoCarryService.Client.Misc
         public float LastLeadAimingTime = -999f;
         public List<Player> LeadVisibleEnemies = new();
         public float LastLeadShotReportTime = -999f;
+        /// <summary>Fork: last time the player's shot matched an enemy (MakingShotPatch); read by C2Sain/TeamModes.</summary>
+        public float LastLeadEngageShotTime = -999f;
         public float NextEnemyCleanupTime = -999f;
 
         public bool IsLeadThreatEnemy(IPlayer enemy)

@@ -105,8 +105,22 @@ namespace MiyakoCarryService.Client.Bots.Brain.Layers
                     return new Action(typeof(HoldPositionLogic), "Mcs:LeadPlayerNull");
                 }
 
+                // Fork: Break off from combat -- run back to the player; C2Gate hands over to SAIN on arrival.
+                if (McsBotPlayerData.Fork.BreakOff.Active)
+                {
+                    var breakOffLeadPos = BotOwner.GetMcsLeadPlayerPos(McsBotPlayerData);
+                    if (TryRefreshLeadTarget(breakOffLeadPos, time))
+                    {
+                        ApplyMovePoint();
+                        return new Action(typeof(GoToPointLogic), "C2Sain:BreakOff");
+                    }
+                    return new Action(typeof(HoldPositionLogic), "C2Sain:BreakOffNoPath");
+                }
+
                 var hasTravelTask = McsBotPlayerData.HasAnyIntent(Classification.TravelTaskIntents);
-                var fightActive = (goalEnemy != null && time - _lastCanShootTime <= (hasTravelTask ? 2f : 15f)) || IsApproachingThreat();
+                // Fork: fighting is SAIN's job. C2 only runs MCS's own fight logic for bots SAIN does not manage.
+                var fightActive = C2Sain.SainBridge.GetSain(BotOwner) == null
+                    && ((goalEnemy != null && time - _lastCanShootTime <= (hasTravelTask ? 2f : 15f)) || IsApproachingThreat());
 
                 ReportFightState(fightActive, time);
 
@@ -569,7 +583,7 @@ namespace MiyakoCarryService.Client.Bots.Brain.Layers
                                     return new Action(typeof(HealLogic), "Mcs:FightHealing5");
                                 }
 
-                                if (sqrDistance >= TOO_FAR_FROM_LEAD_DISTANCE * 1 || tooClose)
+                                if (IsBeyondFollowDistance(sqrDistance) || tooClose)
                                 {
                                     if (_currentMoveTarget.HasValue)
                                     {
@@ -668,7 +682,7 @@ namespace MiyakoCarryService.Client.Bots.Brain.Layers
                                 return new Action(typeof(HealLogic), "Mcs:FightHealing5");
                             }
 
-                            if (sqrDistance >= TOO_FAR_FROM_LEAD_DISTANCE * 1 || tooClose)
+                            if (IsBeyondFollowDistance(sqrDistance) || tooClose)
                             {
                                 if (_currentMoveTarget.HasValue)
                                 {
@@ -863,7 +877,7 @@ namespace MiyakoCarryService.Client.Bots.Brain.Layers
 
                 TryRefreshLeadTarget(mcsLeadPlayerPos, time);
 
-                if (sqrDistance >= TOO_FAR_FROM_LEAD_DISTANCE * 1 || tooClose)
+                if (IsBeyondFollowDistance(sqrDistance) || tooClose)
                 {
                     if (_currentMoveTarget.HasValue)
                     {
@@ -911,9 +925,16 @@ namespace MiyakoCarryService.Client.Bots.Brain.Layers
 
             var mcsBotPlayerData = BotOwner.GetMcsBotPlayerData();
 
-            if (mcsBotPlayerData != null && mcsBotPlayerData.HasIntent(Intents.ShouldUseStationaryWeapon))
+            // Fork: decide whether C2 runs or steps aside for SAIN and the Guard layer (C2Sain/C2Gate.cs).
+            var wantsC2 = (mcsBotPlayerData != null && mcsBotPlayerData.HasIntent(Intents.ShouldUseStationaryWeapon))
+                || C2Sain.C2Gate.WantsC2(BotOwner, mcsBotPlayerData);
+            if (mcsBotPlayerData != null)
             {
-                return true;
+                mcsBotPlayerData.Fork.C2Active = wantsC2;
+            }
+            if (wantsC2)
+            {
+                C2Sain.SainBridge.ReleaseSain(BotOwner);
             }
 
             if (BotOwner.Memory.HaveEnemy)
@@ -931,7 +952,7 @@ namespace MiyakoCarryService.Client.Bots.Brain.Layers
                     }
                 }
             }
-            return true;
+            return wantsC2;
         }
     }
 }

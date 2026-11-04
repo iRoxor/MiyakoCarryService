@@ -55,6 +55,7 @@ namespace MiyakoCarryService.Client.Patches.Bots
                 return;
             }
 
+            mcsAILeadPlayer.LastLeadEngageShotTime = time; // Fork: the player fired at an identified enemy
             mcsAILeadPlayer.CalcGoalEnemy(engagementTarget);
         }
 

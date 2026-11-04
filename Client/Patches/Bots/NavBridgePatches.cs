@@ -174,6 +174,12 @@ namespace MiyakoCarryService.Client.Patches.Bots
                 return;
             }
 
+            // Fork: vault/drop shortcuts and their navmesh warps are off by default.
+            if (!C2Sain.ForkConfig.GapCrossing.Value)
+            {
+                return;
+            }
+
             NavGapExecutor.OnMoverTick(botOwner);
         }
     }

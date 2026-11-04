@@ -31,9 +31,10 @@ namespace MiyakoCarryService.Client
     [BepInPlugin(McsGUID, McsPluginName, BepInExClientVersion)]
     [BepInProcess(EFTapp)]
     [BepInDependency(BigBrainGUID, BepInDependency.DependencyFlags.HardDependency)]
+    [BepInDependency("me.sol.sain", BepInDependency.DependencyFlags.HardDependency)] // Fork: SAIN is the combat brain
     public sealed class MiyakoCarryServicePlugin : BaseUnityPlugin
     {
-        public const string BepInExClientVersion = "1.1.4.0";
+        public const string BepInExClientVersion = "1.1.4.100"; // Fork: upstream 1.1.4.0 + C2/SAIN fork (C2Sain/ForkInfo.cs)
         public static System.Version ClientVersion { get; } = new(BepInExClientVersion);
         public const string EFTapp = "EscapeFromTarkov.exe";
         public const string McsGUID = "top.himesamanoyume.miyakocarryservice";
@@ -128,6 +129,7 @@ namespace MiyakoCarryService.Client
                 LocalizationManager.Instance.UpdateLocales(kvp.Key, kvp.Value);
             }
             EnableAllPatches();
+            McsLogger.LogInfo($"[{C2Sain.ForkInfo.Label}] loaded: SAIN fights, MCS commands");
             GameLoop.Instance.Init();
         }
 
@@ -254,6 +256,7 @@ namespace MiyakoCarryService.Client
             _patches.Add(new BotBewarePlantedMineUpdatePatch());
             _patches.Add(new AvailableInteractionStateSetterPatch());
             _patches.Add(new FindDamagedPartPatch());
+            _patches.Add(new C2Sain.Patches.SainSetDecisionsPatch());
 
             if (FikaInstalled)
             {
@@ -430,6 +433,8 @@ namespace MiyakoCarryService.Client
 
         private void SetupConfig()
         {
+            C2Sain.ForkConfig.Bind(this);
+
             #region BASIC
 
             EnableLooting = Register(

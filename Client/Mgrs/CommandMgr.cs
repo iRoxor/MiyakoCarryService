@@ -189,7 +189,7 @@ namespace MiyakoCarryService.Client.Mgrs
             menu.RegisterCommand(Locales.TEAMREPORTABOUTSELFCOMMAND_NAME, Locales.TEAMREPORTABOUTSELFCOMMAND_TARGETNAME, ECommandType.ReportAboutSelf.ToString(), mcsBotPlayers, shouldCheckExclude: false);
             menu.RegisterCommand(Locales.TEAMONYOUROWNCOMMAND_NAME, Locales.TEAMONYOUROWNCOMMAND_TARGETNAME, ECommandType.OnYourOwn.ToString(), mcsBotPlayers, shouldCheckExclude: isTeam);
             menu.RegisterCommand(Locales.TEAMREGROUPCOMMAND_NAME, Locales.TEAMREGROUPCOMMAND_TARGETNAME, ECommandType.Regroup.ToString(), mcsBotPlayers, shouldCheckExclude: isTeam);
-            menu.RegisterCommand(Locales.TEAMFOLLOWMECOMMAND_NAME, Locales.TEAMFOLLOWMECOMMAND_TARGETNAME, ECommandType.FollowMe.ToString(), mcsBotPlayers, shouldCheckExclude: isTeam);
+            menu.RegisterCommand(C2Sain.ForkText.Get("McsFork/TeamBreakOff Name"), "McsFork/TeamBreakOff TargetName", ECommandType.FollowMe.ToString(), mcsBotPlayers, shouldCheckExclude: isTeam);
             menu.RegisterCommand(Locales.TEAMGOTOPOINTCOMMAND_NAME, Locales.TEAMGOTOPOINTCOMMAND_TARGETNAME, ECommandType.GoToPoint.ToString(), mcsBotPlayers, resolver: () => Physics.Raycast(Singleton<GameWorld>.Instance.MainPlayer.InteractionRay,
             out var hit, float.MaxValue, LayersMaskController.HighPolyWithTerrainMask)
             ? new McsCommandContext { Position = hit.point, ShouldCheckExclude = isTeam } : null, shouldCheckExclude: isTeam);
@@ -212,7 +212,7 @@ namespace MiyakoCarryService.Client.Mgrs
             menu.RegisterCommand(Locales.REPORTABOUTSELFCOMMAND_NAME, Locales.REPORTABOUTSELFCOMMAND_TARGETNAME, ECommandType.ReportAboutSelf.ToString(), mcsBotPlayers);
             menu.RegisterCommand(Locales.ONYOUROWNCOMMAND_NAME, Locales.ONYOUROWNCOMMAND_TARGETNAME, ECommandType.OnYourOwn.ToString(), mcsBotPlayers);
             menu.RegisterCommand(Locales.REGROUPCOMMAND_NAME, Locales.REGROUPCOMMAND_TARGETNAME, ECommandType.Regroup.ToString(), mcsBotPlayers);
-            menu.RegisterCommand(Locales.FOLLOWMECOMMAND_NAME, Locales.FOLLOWMECOMMAND_TARGETNAME, ECommandType.FollowMe.ToString(), mcsBotPlayers);
+            menu.RegisterCommand(C2Sain.ForkText.Get("McsFork/BreakOff Name"), "McsFork/BreakOff TargetName", ECommandType.FollowMe.ToString(), mcsBotPlayers);
             menu.RegisterCommand(Locales.GOTOPOINTCOMMAND_NAME, Locales.GOTOPOINTCOMMAND_TARGETNAME, ECommandType.GoToPoint.ToString(), mcsBotPlayers, resolver: () => Physics.Raycast(Singleton<GameWorld>.Instance.MainPlayer.InteractionRay,
             out var hit, float.MaxValue, LayersMaskController.HighPolyWithTerrainMask)
             ? new McsCommandContext { Position = hit.point } : null);
@@ -786,15 +786,18 @@ namespace MiyakoCarryService.Client.Mgrs
             var mcsBotPlayerData = botOwner.GetMcsBotPlayerData();
             if (mcsBotPlayerData != null)
             {
-                mcsBotPlayerData.SetIntent([Intents.ShouldKeepFormation], Intents.ShouldFollowMe);
+                // Fork: Break off from combat -- run back to the player, then SAIN resumes. No lasting
+                // passive state (upstream's Follow Me intent stayed until On Your Own removed it).
+                mcsBotPlayerData.SetIntent([Intents.ShouldKeepFormation]);
                 mcsBotPlayerData.MoveResetRequested = true;
                 mcsBotPlayerData.IsLooting = false;
                 mcsBotPlayerData.TargetPos = null;
                 mcsBotPlayerData.ProxyTargetId = null;
+                mcsBotPlayerData.Fork.BreakOff.Begin(Time.time);
             }
             botOwner.TalkMsg(new McsMsg
             {
-                PhraseTrigger = EPhraseTrigger.Roger
+                PhraseTrigger = EPhraseTrigger.Regroup
             });
         }
 

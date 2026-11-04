@@ -36,12 +36,15 @@ namespace MiyakoCarryService.Client.Mgrs
         private void InitCustomLayerMaps()
         {
             LayerUtils.RegisterCustomLayer(typeof(McsBrainLayer), 200);
+            // Fork: floor layer that guards when neither C2 nor SAIN is driving (C2Sain/Layers/McsGuardLayer.cs).
+            LayerUtils.RegisterCustomLayer(typeof(MiyakoCarryService.Client.C2Sain.Layers.McsGuardLayer), 19);
         }
 
         public override void OnRaidEnded()
         {
             base.OnRaidEnded();
             LayerUtils.OnRaidEnded();
+            MiyakoCarryService.Client.C2Sain.TeamModes.Clear();
         }
 
         private async Task Reload()

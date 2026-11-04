@@ -128,6 +128,8 @@ namespace MiyakoCarryService.Client.Datas
         public float LastHitTime = -999f;
         public Player LastHitShooter = null;
         public float LastShotAtTime = -999f;
+        /// <summary>Fork: per-bot C2/SAIN state (C2Sain/BotForkState.cs).</summary>
+        internal C2Sain.BotForkState Fork { get; } = new();
         public float SuppressionNumber = 0f;
         public bool IsHeavySuppressed => SuppressionNumber >= 3f;
         private const float SUPPRESSION_MAX = 6f;
@@ -620,6 +622,7 @@ namespace MiyakoCarryService.Client.Datas
                     BaseInfoBuilder.Append('\n').Append("Layer: ").Append(brain.ActiveLayerName());
                     BaseInfoBuilder.Append('\n').Append("EnterBy: ").Append(brain.GetActiveNodeReason());
                 }
+                BaseInfoBuilder.Append('\n').Append(C2Sain.ForkDebug.Describe(this));
             }
             catch
             {

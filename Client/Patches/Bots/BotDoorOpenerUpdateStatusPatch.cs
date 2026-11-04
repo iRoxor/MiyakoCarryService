@@ -24,6 +24,12 @@ namespace MiyakoCarryService.Client.Patches.Bots
                 return true;
             }
 
+            // Fork: upstream's fast doors are off by default, so the game's own door handling runs.
+            if (!C2Sain.ForkConfig.McsFastDoors.Value)
+            {
+                return true;
+            }
+
             if (__instance.Interacting || botOwner.Mover.CurrentState == EBotMoverState.NearDoor)
             {
                 return true;

@@ -84,6 +84,8 @@ namespace MiyakoCarryService.Client.Bots.Brain.Layers
         protected const float LEAD_POSITION_CHANGE_THRESHOLD = 2f;
         protected const float TOO_FAR_FROM_LEAD_DISTANCE = 20f;
         protected const float TOO_CLOSE_FROM_LEAD_DISTANCE = 2f;
+        /// <summary>Fork: keep a follow spot until the player has moved this far (m) from where it was picked.</summary>
+        protected const float FOLLOW_SPOT_KEEP_DISTANCE = 3f;
         protected const float VAULT_PROBE_BACKOFF = 0.75f;
         protected const float ENTER_COMMON_LOOTING_COODDOWN = 10f;
         protected const float WEAPON_SWITCH_COOLDOWN = 1f;
@@ -788,7 +790,7 @@ namespace MiyakoCarryService.Client.Bots.Brain.Layers
 
         public virtual void TrySolveStuck()
         {
-            if (TryFastOpenNearestDoor())
+            if (C2Sain.ForkConfig.McsFastDoors.Value && TryFastOpenNearestDoor())
             {
                 return;
             }
@@ -796,7 +798,7 @@ namespace MiyakoCarryService.Client.Bots.Brain.Layers
             if (_nextVaultCheckTime < Time.time)
             {
                 _nextVaultCheckTime = Time.time + 1.5f;
-                if (ShouldTryVault() && TryVault())
+                if (C2Sain.ForkConfig.GapCrossing.Value && ShouldTryVault() && TryVault())
                 {
                     _nextJumpCheckTime = float.MaxValue;
                     return;
@@ -1598,29 +1600,29 @@ namespace MiyakoCarryService.Client.Bots.Brain.Layers
                 return;
             }
 
-            if (_lastTargetPos.Value.McsSqrDistance(leadPos.Value) < LEAD_POSITION_CHANGE_THRESHOLD * LEAD_POSITION_CHANGE_THRESHOLD)
+            // Fork: keep the current spot until the player has really moved. Upstream never updated
+            // _lastTargetPos here, so the spot was re-rolled about once a second.
+            if (_currentMoveTarget.HasValue && _lastTargetPos.HasValue
+                && _lastTargetPos.Value.McsSqrDistance(leadPos.Value) < FOLLOW_SPOT_KEEP_DISTANCE * FOLLOW_SPOT_KEEP_DISTANCE)
             {
                 nextUpdateTime = 1f;
                 return;
             }
 
-            var nearPos = Tools.GetPosNearTarget(leadPos.Value, BotOwner);
-            if (!nearPos.HasValue)
+            // Fork: only spots in the player's own space (same floor, straight navmesh line from the player),
+            // so bots stop pathing into the next room or onto another floor to stand "near" the player.
+            Vector3[] corners;
+            if (!C2Sain.C2Nav.TryPickFollowSpot(leadPos.Value, BotOwner.Position, out _, out corners))
             {
-                nextUpdateTime = 0.25f;
-                return;
+                if (!CanGetPathToRun(BotOwner.Position, leadPos.Value, McsBotPlayerData, out corners) || corners == null)
+                {
+                    nextUpdateTime = 0.25f;
+                    return;
+                }
             }
 
-            var groundPos = TryProjectToGround(nearPos.Value);
-
-            if (!CanGetPathToRun(BotOwner.Position, groundPos, McsBotPlayerData, out Vector3[] corners))
-            {
-                nextUpdateTime = 0.25f;
-                return;
-            }
-
-            var newMoveTarget = GetPointAlongPathAtDistance(corners, 15f);
-            _currentMoveTarget = newMoveTarget;
+            _lastTargetPos = leadPos;
+            _currentMoveTarget = GetPointAlongPathAtDistance(corners, 15f);
             nextUpdateTime = 1f;
         }
 
@@ -1785,6 +1787,22 @@ namespace MiyakoCarryService.Client.Bots.Brain.Layers
             nextUpdateTime = 1f;
         }
 
+        /// <summary>
+        /// Fork: whether the bot should walk back toward the player. In formation, whether it is more than
+        /// 1.5 m from its slot's move target; otherwise whether it is beyond the configured follow distance.
+        /// Upstream compared the squared distance with 20, which tripped at about 4.5 m.
+        /// </summary>
+        /// <param name="sqrDistanceToLead">Squared distance from the bot to the player.</param>
+        protected bool IsBeyondFollowDistance(float sqrDistanceToLead)
+        {
+            if (McsBotPlayerData != null && McsBotPlayerData.HasIntent(Intents.ShouldKeepFormation) && _currentMoveTarget.HasValue)
+            {
+                return BotOwner.Position.McsSqrDistance(_currentMoveTarget.Value) > 1.5f * 1.5f;
+            }
+            var followDistance = C2Sain.ForkConfig.FollowDistance?.Value ?? 8f;
+            return sqrDistanceToLead >= followDistance * followDistance;
+        }
+
         public virtual bool CanGetPathToRun(Vector3 startPos, Vector3 targetPos, McsBotPlayerData mcsBotPlayerData, out Vector3[] corners)
         {
             if (NavBridge.IsCrossing)
@@ -1823,7 +1841,7 @@ namespace MiyakoCarryService.Client.Bots.Brain.Layers
                 }
             }
 
-            if (NavBridge.TryPlanStepDown(BotOwner, targetPos, navMeshPath))
+            if (C2Sain.ForkConfig.GapCrossing.Value && NavBridge.TryPlanStepDown(BotOwner, targetPos, navMeshPath))
             {
                 _currentMoveRetries = 0;
                 _lastCalcCorners = NavBridge.Way;
@@ -1836,7 +1854,8 @@ namespace MiyakoCarryService.Client.Bots.Brain.Layers
             {
                 navMeshPath = new NavMeshPath();
                 NavMesh.CalculatePath(startPos, betterDest, -1, navMeshPath);
-                if (navMeshPath.status is NavMeshPathStatus.PathComplete or NavMeshPathStatus.PathPartial)
+                // Fork: the fallback destination must be fully reachable (upstream took partial paths unchecked).
+                if (navMeshPath.status == NavMeshPathStatus.PathComplete)
                 {
                     flag = true;
                 }
@@ -1845,11 +1864,21 @@ namespace MiyakoCarryService.Client.Bots.Brain.Layers
             if (!flag)
             {
                 _currentMoveRetries += 1;
-                if (_currentMoveRetries >= 5 || !_lastCanRunResult)
+                // Fork: give up only after 5 failures in a row, and say so. Upstream also gave up on the
+                // first failure when no earlier path had succeeded, silently cancelling the order.
+                if (_currentMoveRetries >= 5)
                 {
                     _currentMoveRetries = 0;
                     corners = null;
                     _lastCanRunResult = false;
+                    if (mcsBotPlayerData.HasAnyIntent(Classification.TravelTaskIntents) || mcsBotPlayerData.HasIntent(Intents.ShouldClearArea))
+                    {
+                        BotOwner.TalkMsg(new McsMsg
+                        {
+                            PhraseTrigger = EPhraseTrigger.Negative,
+                            Keys = ["McsFork/CantGetThere"]
+                        });
+                    }
                     mcsBotPlayerData.SetIntent([Intents.ShouldFollowMe, Intents.ShouldKeepFormation]);
                     mcsBotPlayerData.TargetPos = null;
                     mcsBotPlayerData.ProxyTargetId = null;
@@ -1869,6 +1898,10 @@ namespace MiyakoCarryService.Client.Bots.Brain.Layers
 
         protected void UpdateFastOpenDoor()
         {
+            if (!C2Sain.ForkConfig.McsFastDoors.Value)
+            {
+                return;
+            }
             var time = Time.time;
             if (_nextFastOpenDoorCheckTime > time)
             {
@@ -1994,7 +2027,7 @@ namespace MiyakoCarryService.Client.Bots.Brain.Layers
                     result = rayHit.point;
                 }
             }
-            else if (NavMesh.SamplePosition(pos, out var navHit2, 10f, -1))
+            else if (NavMesh.SamplePosition(pos, out var navHit2, 2f, -1)) // Fork: was 10 m, which could land on another floor
             {
                 result = navHit2.position;
             }

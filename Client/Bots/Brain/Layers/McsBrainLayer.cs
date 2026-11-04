@@ -823,7 +823,9 @@ namespace MiyakoCarryService.Client.Bots.Brain.Layers
                     return new Action(typeof(HoldPositionLogic), "Mcs:HoldPositionCommand");
                 }
 
-                if (BotOwner.Medecine.Stimulators.HaveSmt && Time.time > _nextStimCheckTime)
+                // Fork: upstream injected any stim every 30 s, even out of combat; now only with the
+                // "Stims outside combat" setting (C2Sain/ForkConfig.cs). SAIN still uses stims in a fight.
+                if (C2Sain.ForkConfig.OutOfCombatStims.Value && BotOwner.Medecine.Stimulators.HaveSmt && Time.time > _nextStimCheckTime)
                 {
                     _nextStimCheckTime = Time.time + 30f;
                     return new Action(typeof(HealStimulatorsLogic), "Mcs:UseStim");

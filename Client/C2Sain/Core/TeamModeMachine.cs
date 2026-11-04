@@ -87,6 +87,24 @@ namespace MiyakoCarryService.Client.C2Sain.Core
             ZoneIsDefend = true;
         }
 
+        /// <summary>
+        /// Starts Guard at once at the player's position (a contact report), without waiting for
+        /// the idle timer. Re-anchors an existing Guard zone; a Defend Me zone is left alone.
+        /// </summary>
+        /// <param name="playerPos">Where the player stood when the report was made.</param>
+        /// <param name="settings">Supplies GuardRadius.</param>
+        public void StartGuard(V3 playerPos, TeamModeSettings settings)
+        {
+            if (HasZone && ZoneIsDefend)
+            {
+                return;
+            }
+            HasZone = true;
+            ZoneAnchor = playerPos;
+            ZoneRadius = settings.GuardRadius;
+            ZoneIsDefend = false;
+        }
+
         /// <summary>Removes a Defend Me zone, if one exists. A Guard zone is left alone.</summary>
         public void CancelDefend()
         {

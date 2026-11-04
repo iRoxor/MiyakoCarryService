@@ -1,14 +1,17 @@
 // GuardLogics.cs -- the two BigBrain logics McsGuardLayer runs.
 //
-//   GuardMoveLogic  -- walk to the guard spot the layer set as the move target;
-//                      sprint when the layer flags MoveFast (returning from a cut
-//                      chase, or far from the player). Uses the game's
-//                      GoToSomePoint node, so the game's door handling applies.
-//   GuardWatchLogic -- stand still and watch: an enemy SAIN sees first, then the
-//                      squad's last known threat (TeamModes), otherwise scan a
-//                      +/-70 degree arc around the outward direction, turning
-//                      every 2-4 s. This is what replaces upstream MCS's frozen
-//                      heading for standing bots.
+//   GuardMoveLogic  -- go to the move target the layer set (guard spot, the way
+//                      back after a chase, or a flank leg's point): sprint when
+//                      the layer flags MoveFast, otherwise walk upright, watching
+//                      the enemy's last known position on a flank leg and the
+//                      way ahead otherwise. Uses the game's GoToSomePoint node,
+//                      so the game's door handling applies.
+//   GuardWatchLogic -- stand still and watch, crouched when the spot has cover or
+//                      a bush toward the watch direction: an enemy SAIN sees
+//                      first, then the squad's threat or contact report
+//                      (TeamModes), otherwise scan a +/-70 degree arc around the
+//                      watch direction, turning every 2-4 s. This is what
+//                      replaces upstream MCS's frozen heading for standing bots.
 // Created by BigBrain when McsGuardLayer returns them. Read the bot's fork state;
 // read and write no files.
 
@@ -31,6 +34,13 @@ namespace MiyakoCarryService.Client.C2Sain.Logics
             _baseLogic = new GoToSomePoint(botOwner);
         }
 
+        /// <summary>Stands the bot up; a watch may have left it crouched.</summary>
+        public override void Start()
+        {
+            BotOwner.SetPose(1f);
+            base.Start();
+        }
+
         /// <summary>Moves one frame toward the target set with GoToSomePointData.SetPoint.</summary>
         public override void Update(CustomLayer.ActionData data)
         {
@@ -43,15 +53,26 @@ namespace MiyakoCarryService.Client.C2Sain.Logics
             }
 
             BotOwner.Sprint(false, false);
-            BotOwner.Steering.LookToMovingDirection();
             _baseLogic.DoorOpen();
             BotOwner.GoToSomePointData.UpdateToGo(false, 1f, 1f);
+            if (fork != null && fork.Engage.FlankActive)
+            {
+                var anchor = fork.Engage.FlankAnchor;
+                BotOwner.Steering.LookToPoint(new Vector3(anchor.X, anchor.Y + 1.2f, anchor.Z));
+            }
+            else
+            {
+                BotOwner.Steering.LookToMovingDirection();
+            }
         }
     }
 
     /// <summary>Stands still and watches; see the file header for the look priority.</summary>
     public class GuardWatchLogic : McsBotBaseLogic
     {
+        /// <summary>Pose level used at a covered spot (0 = full crouch, 1 = standing).</summary>
+        private const float COVERED_POSE = 0.3f;
+
         private float _nextLookTime;
         private Vector3 _lookDirection;
 
@@ -60,12 +81,14 @@ namespace MiyakoCarryService.Client.C2Sain.Logics
         {
         }
 
-        /// <summary>Stops movement and resets the stuck timer's reference position.</summary>
+        /// <summary>Stops movement, resets the stuck timer's reference position, and crouches at a covered spot.</summary>
         public override void Start()
         {
             BotOwner.Mover._lastPos = BotOwner.Position;
             BotOwner.StopMove();
             _nextLookTime = 0f;
+            var covered = BotOwner.GetMcsBotPlayerData()?.Fork.GuardSpotCovered == true;
+            BotOwner.SetPose(covered ? COVERED_POSE : 1f);
             base.Start();
         }
 
@@ -76,8 +99,8 @@ namespace MiyakoCarryService.Client.C2Sain.Logics
             BotOwner.StopMove();
             BotOwner.Mover._lastTimePosChanged = Time.time;
 
-            // SAIN's own vision, not the game's EnemyInfo.IsVisible: MCS forces that flag true when
-            // sharing the player's enemies (McsAILeadPlayer.CalcGoalEnemy), even through walls.
+            // SAIN's own vision, not the game's EnemyInfo.IsVisible, which upstream MCS used to force
+            // true when sharing the player's enemies (McsAILeadPlayer.CalcGoalEnemy).
             var sainEnemy = SainBridge.GetSain(BotOwner)?.GoalEnemy;
             if (sainEnemy != null && sainEnemy.IsVisible && sainEnemy.EnemyPlayer != null)
             {

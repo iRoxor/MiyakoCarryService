@@ -1,6 +1,7 @@
 // SainBridge.cs -- every direct read or write of SAIN's per-bot state, in one place.
 //
-// Called by C2Gate, TeamModes, DecisionPolicy and the Guard layer. Requires
+// Called by C2Gate, TeamModes, DecisionPolicy, EngageTactics, ContactReports and
+// the Guard layer. Requires
 // SAIN 4.5.1 (SAIN.dll is a compile-time reference and a hard BepInEx
 // dependency of this fork). Reads and writes no files.
 //
@@ -11,12 +12,16 @@
 // SAINActivationClass.ManualUpdate stop SAIN's mover and aiming once, on the
 // transition (checked in SAIN 4.5.1 source, SAINActivationClass.cs).
 
+using System;
 using EFT;
+using HarmonyLib;
 using MiyakoCarryService.Client.Datas;
 using SAIN.Components;
 using SAIN.Components.BotController;
 using SAIN.Models.Enums;
+using SAIN.Preset.Shared.Models.Preset.Personalities;
 using SAIN.SAINComponent.Classes.EnemyClasses;
+using SAIN.SAINComponent.Classes.Info;
 
 namespace MiyakoCarryService.Client.C2Sain
 {
@@ -118,6 +123,117 @@ namespace MiyakoCarryService.Client.C2Sain
             {
                 enemy.KnownPlaces.SetPlaceAsSearched(place);
             }
+        }
+
+        /// <summary>Setter for SAIN's private TimeBeforeSearch, bound on first use.</summary>
+        private static Action<SAINBotInfoClass, float> _setTimeBeforeSearch;
+
+        /// <summary>
+        /// Gives the bot a SAIN personality from the loaded preset and recalculates the timers SAIN
+        /// derives from it (search delay, hold-ground time). Returns false when the bot has no SAIN
+        /// component or the preset lacks that personality.
+        /// </summary>
+        public static bool TryApplyPersonality(BotComponent bot, EPersonality personality)
+        {
+            var info = bot?.Info;
+            if (info == null)
+            {
+                return false;
+            }
+            if (info.Personality == personality)
+            {
+                return true;
+            }
+            info.SetPersonality(personality);
+            if (info.Personality != personality)
+            {
+                return false;
+            }
+            info.CalcTimeBeforeSearch();
+            info.CalcHoldGroundDelay();
+            return true;
+        }
+
+        /// <summary>
+        /// A fresh personality roll from SAIN's own picker for this bot (forced, nickname and boss rules,
+        /// then each personality's random chance), without applying it. Null without a SAIN component.
+        /// </summary>
+        public static EPersonality? RollPersonality(BotComponent bot)
+        {
+            return bot?.Info?.GetPersonality(out _);
+        }
+
+        /// <summary>The bot's current SAIN personality, or null without a SAIN component.</summary>
+        public static EPersonality? GetPersonality(BotComponent bot)
+        {
+            return bot?.Info?.Personality;
+        }
+
+        /// <summary>
+        /// Overrides how long SAIN waits after losing sight of an enemy before it searches. SAIN
+        /// recalculates the value from the personality every two minutes and on preset changes,
+        /// so callers re-apply it while their order lasts and call <see cref="RestoreTimeBeforeSearch"/> after.
+        /// </summary>
+        public static void SetTimeBeforeSearch(BotComponent bot, float seconds)
+        {
+            var info = bot?.Info;
+            if (info == null || Math.Abs(info.TimeBeforeSearch - seconds) < 0.01f)
+            {
+                return;
+            }
+            _setTimeBeforeSearch ??= AccessTools.MethodDelegate<Action<SAINBotInfoClass, float>>(
+                AccessTools.PropertySetter(typeof(SAINBotInfoClass), nameof(SAINBotInfoClass.TimeBeforeSearch)));
+            _setTimeBeforeSearch(info, seconds);
+        }
+
+        /// <summary>Recomputes SAIN's search delay from the bot's personality, undoing <see cref="SetTimeBeforeSearch"/>.</summary>
+        public static void RestoreTimeBeforeSearch(BotComponent bot)
+        {
+            bot?.Info?.CalcTimeBeforeSearch();
+        }
+
+        /// <summary>
+        /// Tells SAIN that a squadmate saw <paramref name="enemyPlayer"/> at <paramref name="position"/>,
+        /// the way SAIN shares sightings inside a squad: the enemy becomes known with that last known
+        /// place, but the bot has not seen it itself (Enemy.Seen stays false). Returns SAIN's enemy
+        /// record, or null when SAIN does not treat the player as this bot's enemy.
+        /// </summary>
+        public static Enemy ShareSighting(BotComponent bot, Player enemyPlayer, UnityEngine.Vector3 position)
+        {
+            if (bot?.EnemyController == null || enemyPlayer == null)
+            {
+                return null;
+            }
+            var enemy = bot.EnemyController.CheckAddEnemy(enemyPlayer);
+            if (enemy?.KnownPlaces == null || enemy.IsVisible)
+            {
+                return enemy;
+            }
+            var placeData = new PlaceData
+            {
+                OwnerEnemy = enemy,
+                Owner = enemy.Bot,
+                IsAI = enemy.IsAI,
+                OwnerID = enemy.Bot.ProfileId,
+            };
+            var reported = new EnemyPlace(placeData, position, true, EEnemyPlaceType.Vision, null);
+            enemy.KnownPlaces.UpdateSquadSeenPlace(reported, UnityEngine.Time.time);
+            return enemy;
+        }
+
+        /// <summary>
+        /// True when the enemy is worth engaging: visible now, or its position was updated (seen,
+        /// heard or reported) within <paramref name="maxAgeSeconds"/>.
+        /// </summary>
+        public static bool IsFreshContact(Enemy enemy, float maxAgeSeconds)
+        {
+            return enemy != null && (enemy.IsVisible || enemy.TimeSinceLastKnownUpdated <= maxAgeSeconds);
+        }
+
+        /// <summary>True when the bot was hit or shot at within the last <paramref name="windowSeconds"/>.</summary>
+        public static bool IsUnderFire(McsBotPlayerData data, float now, float windowSeconds)
+        {
+            return data != null && (now - data.LastHitTime <= windowSeconds || now - data.LastShotAtTime <= windowSeconds);
         }
     }
 }

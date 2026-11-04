@@ -8,12 +8,17 @@
 // writes no files.
 //
 // Policy, in order:
+//   0. The bot's SAIN personality is kept at what it should be (EngageTactics):
+//      lent by an Engage order, else from the allowed-personalities setting.
 //   1. While the C2 layer is active SAIN's decisions are not executed; the leash
 //      is reset so time spent under C2 does not count as chasing.
-//   2. Hold Position: decisions that move the bot are replaced by StandAndShoot
+//   2. An Engage order (EngageTactics) replaces rules 3-5 while it runs: no
+//      leash, flank legs, covering fire.
+//   3. Hold Position: decisions that move the bot are replaced by StandAndShoot
 //      (enemy visible) or Freeze (stay and listen).
-//   3. An enemy that was only heard, never seen, may not be chased.
-//   4. The chase leash (ChaseLeash): 3-5 s per chase, cut at once if another
+//   4. An enemy the bot never saw itself (heard, or reported by a squadmate or
+//      the player) may not be chased.
+//   5. The chase leash (ChaseLeash): 3-5 s per chase, cut at once if another
 //      enemy appears, then no chasing until the bot is back with the player.
 // A vetoed solo chase becomes StandAndShoot when the enemy is visible, otherwise
 // None, so SAIN's layers stand down and the Guard layer walks the bot back.
@@ -59,12 +64,20 @@ namespace MiyakoCarryService.Client.C2Sain
             var fork = data.Fork;
             var now = Time.time;
             fork.RawDecision = $"{solo}/{squad}/{self}";
+            EngageTactics.EnsurePersonality(bot, fork);
 
             if (fork.C2Active)
             {
                 fork.Leash.ShouldVeto(now, false, 0, 0f, RefreshLeashSettings());
                 fork.FinalDecision = fork.RawDecision;
                 fork.VetoReason = "C2 in charge";
+                return;
+            }
+
+            if (EngageTactics.Apply(bot, botOwner, data, ref solo, ref squad, enemy, now, out var engageReason))
+            {
+                fork.FinalDecision = $"{solo}/{squad}/{self}";
+                fork.VetoReason = engageReason ?? "engaging";
                 return;
             }
 
@@ -107,7 +120,7 @@ namespace MiyakoCarryService.Client.C2Sain
                     {
                         squad = ESquadDecision.None;
                     }
-                    reason = heardOnly ? "heard only" : fork.Leash.GraceLeft(now) > 0f ? "break-off grace" : "chase limit";
+                    reason = heardOnly ? "not seen by the bot" : fork.Leash.GraceLeft(now) > 0f ? "break-off grace" : "chase limit";
 
                     if (fork.Leash.Returning && !wasReturning)
                     {

@@ -4,7 +4,9 @@
 //
 // Called from McsBrainLayer.IsActive and LayerUtils.McsRemoveNonKeepLayers.
 // Writes BotForkState.C2Active / C2Reason and ends Break off (starting the
-// chase leash's grace period). Reads and writes no files.
+// chase leash's grace period). While an Engage order runs, SAIN (and the Guard
+// layer for flank legs) keeps the bot whatever the squad's mode. Reads and
+// writes no files.
 //
 // Layer stack on a carry bot after injection:
 //   200 C2 (McsBrainLayer)      -- this gate's verdict
@@ -110,6 +112,12 @@ namespace MiyakoCarryService.Client.C2Sain
                     reason = "break off";
                     return true;
                 }
+            }
+
+            if (fork.Engage.Active)
+            {
+                reason = "engaging";
+                return false;
             }
 
             var mode = TeamModes.Get(data.McsAILeadPlayer)?.Mode ?? TeamMode.C2;

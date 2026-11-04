@@ -801,6 +801,7 @@ namespace MiyakoCarryService.Client
             {
                 botOwner.BotTalk._priority.Add(EPhraseTrigger.DontKnow, 142f);
             }
+            C2Sain.ForkCommands.EnsureVoiceTriggers(botOwner); // Fork: voice lines the fork's replies use.
 
             // 此项如果不为false，就会导致SAIN无法进入Combat Layer
             settings.FileSettings.Mind.CAN_STAND_BY = false;

@@ -213,6 +213,14 @@ namespace MiyakoCarryService.Client.Misc
 
                 McsLeadPlayer.BotsGroup.AddEnemy(seenEnemy, EBotEnemyCause.callForHelp2);
 
+                // Fork: a bot SAIN manages gets a squadmate sighting instead of a forced "visible" goal
+                // enemy (which let it shoot at what only the player could see, and threw a
+                // NullReferenceException in EnemyInfo.SetVisible in the user's raid). C2Sain/ContactReports.cs.
+                if (C2Sain.ContactReports.ShareSighting(botOwner, seenEnemy))
+                {
+                    continue;
+                }
+
                 if (!botOwner.EnemiesController.EnemyInfos.TryGetValue(seenEnemy, out var enemyInfo))
                 {
                     if (!TryRegisterEnemyForFollower(botOwner, seenEnemy, out enemyInfo))

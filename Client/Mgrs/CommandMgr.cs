@@ -47,6 +47,10 @@ namespace MiyakoCarryService.Client.Mgrs
             CommandUtils.RegisterCommandHandler(ECommandType.FollowMe.ToString(), FollowMeCommandAction);
             CommandUtils.RegisterCommandHandler(ECommandType.EscortBtr.ToString(), EscortToBtrPosCommandAction);
             CommandUtils.RegisterCommandHandler(ECommandType.ExcludeOrTakeOver.ToString(), ExcludeOrTakeOverCommandAction);
+            // Fork: the C2/SAIN fork's commands (C2Sain/ForkCommands.cs, C2Sain/ContactReports.cs).
+            CommandUtils.RegisterCommandHandler(ECommandType.SpotEnemy.ToString(), C2Sain.ContactReports.Report);
+            CommandUtils.RegisterCommandHandler(ECommandType.EngageEnemy.ToString(), C2Sain.ForkCommands.EngageEnemy);
+            CommandUtils.RegisterCommandHandler(ECommandType.EngageEnemyReckless.ToString(), C2Sain.ForkCommands.EngageEnemyReckless);
 #if DEBUG
             CommandUtils.RegisterCommandHandler(ECommandType.DebugSpawnAI.ToString(), DebugSpawnAICommandAction);
             CommandUtils.RegisterCommandHandler(ECommandType.DebugTeleport.ToString(), DebugTeleportCommandAction);
@@ -112,6 +116,19 @@ namespace MiyakoCarryService.Client.Mgrs
             if (mcsBotPlayers.Length > 0)
             {
                 menu.RegisterSubMenu(Locales.TEAMCOMMAND_NAME, Locales.TEAMCOMMAND_TARGETNAME, m => BuildTeamMenu(m, mcsBotPlayers, true), disabled: () => mcsBotPlayers.All(p => !p.HealthController.IsAlive));
+
+                // Fork: top-level contact report. The crosshair point is only the fallback mark; the
+                // handler looks for the enemy nearest the crosshair ray itself (C2Sain/ContactReports.cs).
+                menu.RegisterCommand(C2Sain.ForkText.Get("McsFork/SpotEnemy Name"), "McsFork/SpotEnemy TargetName", ECommandType.SpotEnemy.ToString(), mcsBotPlayers,
+                    disabled: () => mcsBotPlayers.All(p => !p.HealthController.IsAlive),
+                    resolver: () =>
+                    {
+                        var ray = Singleton<GameWorld>.Instance.MainPlayer.InteractionRay;
+                        return new McsCommandContext
+                        {
+                            Position = Physics.Raycast(ray, out var hit, 300f, LayersMaskController.HighPolyWithTerrainMask) ? hit.point : ray.GetPoint(100f)
+                        };
+                    });
 
                 foreach (var mcsBotPlayer in mcsBotPlayers)
                 {
@@ -187,9 +204,12 @@ namespace MiyakoCarryService.Client.Mgrs
         {
             menu.RegisterCommand(Locales.TEAMREPORTABOUTENEMYCOMMAND_NAME, Locales.TEAMREPORTABOUTENEMYCOMMAND_TARGETNAME, ECommandType.ReportAboutEnemy.ToString(), mcsBotPlayers, shouldCheckExclude: false);
             menu.RegisterCommand(Locales.TEAMREPORTABOUTSELFCOMMAND_NAME, Locales.TEAMREPORTABOUTSELFCOMMAND_TARGETNAME, ECommandType.ReportAboutSelf.ToString(), mcsBotPlayers, shouldCheckExclude: false);
-            menu.RegisterCommand(Locales.TEAMONYOUROWNCOMMAND_NAME, Locales.TEAMONYOUROWNCOMMAND_TARGETNAME, ECommandType.OnYourOwn.ToString(), mcsBotPlayers, shouldCheckExclude: isTeam);
+            // Fork: On Your Own removed from the menus; it also switched looting on, whatever the setting said.
             menu.RegisterCommand(Locales.TEAMREGROUPCOMMAND_NAME, Locales.TEAMREGROUPCOMMAND_TARGETNAME, ECommandType.Regroup.ToString(), mcsBotPlayers, shouldCheckExclude: isTeam);
             menu.RegisterCommand(C2Sain.ForkText.Get("McsFork/TeamBreakOff Name"), "McsFork/TeamBreakOff TargetName", ECommandType.FollowMe.ToString(), mcsBotPlayers, shouldCheckExclude: isTeam);
+            // Fork: Engage Enemy orders (C2Sain/EngageTactics.cs).
+            menu.RegisterCommand(C2Sain.ForkText.Get("McsFork/TeamEngage Name"), "McsFork/TeamEngage TargetName", ECommandType.EngageEnemy.ToString(), mcsBotPlayers, shouldCheckExclude: isTeam);
+            menu.RegisterCommand(C2Sain.ForkText.Get("McsFork/TeamEngageReckless Name"), "McsFork/TeamEngageReckless TargetName", ECommandType.EngageEnemyReckless.ToString(), mcsBotPlayers, shouldCheckExclude: isTeam);
             menu.RegisterCommand(Locales.TEAMGOTOPOINTCOMMAND_NAME, Locales.TEAMGOTOPOINTCOMMAND_TARGETNAME, ECommandType.GoToPoint.ToString(), mcsBotPlayers, resolver: () => Physics.Raycast(Singleton<GameWorld>.Instance.MainPlayer.InteractionRay,
             out var hit, float.MaxValue, LayersMaskController.HighPolyWithTerrainMask)
             ? new McsCommandContext { Position = hit.point, ShouldCheckExclude = isTeam } : null, shouldCheckExclude: isTeam);
@@ -197,7 +217,8 @@ namespace MiyakoCarryService.Client.Mgrs
             menu.RegisterCommand(Locales.TEAMDROPTARGETLOOTCOMMAND_NAME, Locales.TEAMDROPTARGETLOOTCOMMAND_TARGETNAME, ECommandType.DropTargetLoot.ToString(), mcsBotPlayers, shouldCheckExclude: isTeam);
             menu.RegisterSubMenu(Locales.TEAMESCORTCOMMAND_NAME, Locales.TEAMESCORTCOMMAND_TARGETNAME, m => BuildEscortMenu(m, mcsBotPlayers, isTeam));
             menu.RegisterSubMenu(Locales.TEAMCHANGEAIMINGBODYPARTTYPECOMMAND_NAME, Locales.TEAMCHANGEAIMINGBODYPARTTYPECOMMAND_TARGETNAME, m => BuildAimingMenu(m, mcsBotPlayers, isTeam));
-            menu.RegisterCommand(Locales.TEAMCLEARAREACOMMAND_NAME, Locales.TEAMCLEARAREACOMMAND_TARGETNAME, ECommandType.ClearArea.ToString(), mcsBotPlayers, resolver: () => Physics.Raycast(Singleton<GameWorld>.Instance.MainPlayer.InteractionRay, out var hit, float.MaxValue, LayersMaskController.HighPolyWithTerrainMask)
+            // Fork: renamed Clear Target Area; refused in contact (ClearAreaCommandAction).
+            menu.RegisterCommand(C2Sain.ForkText.Get("McsFork/TeamClearTargetArea Name"), "McsFork/TeamClearTargetArea TargetName", ECommandType.ClearArea.ToString(), mcsBotPlayers, resolver: () => Physics.Raycast(Singleton<GameWorld>.Instance.MainPlayer.InteractionRay, out var hit, float.MaxValue, LayersMaskController.HighPolyWithTerrainMask)
             ? new McsCommandContext { Position = hit.point, ShouldCheckExclude = isTeam } : null, shouldCheckExclude: isTeam);
             menu.RegisterSubMenu(Locales.CHANGEFORMATIONCOMMAND_NAME, Locales.CHANGEFORMATIONCOMMAND_TARGETNAME, m => BuildFormationMenu(m, [mcsBotPlayers.FirstOrDefault()], false));
             menu.RegisterCommand(Locales.TEAMFORCETELEPORTCOMMAND_NAME, Locales.TEAMFORCETELEPORTCOMMAND_TARGETNAME, ECommandType.Teleport.ToString(), mcsBotPlayers, shouldCheckExclude: isTeam);
@@ -210,9 +231,12 @@ namespace MiyakoCarryService.Client.Mgrs
             menu.RegisterCommand(Locales.EXCLUDEORTAKEOVERCOMMAND_NAME, Locales.EXCLUDEORTAKEOVERCOMMAND_TARGETNAME, ECommandType.ExcludeOrTakeOver.ToString(), mcsBotPlayers);
             menu.RegisterCommand(Locales.REPORTABOUTENEMYCOMMAND_NAME, Locales.REPORTABOUTENEMYCOMMAND_TARGETNAME, ECommandType.ReportAboutEnemy.ToString(), mcsBotPlayers);
             menu.RegisterCommand(Locales.REPORTABOUTSELFCOMMAND_NAME, Locales.REPORTABOUTSELFCOMMAND_TARGETNAME, ECommandType.ReportAboutSelf.ToString(), mcsBotPlayers);
-            menu.RegisterCommand(Locales.ONYOUROWNCOMMAND_NAME, Locales.ONYOUROWNCOMMAND_TARGETNAME, ECommandType.OnYourOwn.ToString(), mcsBotPlayers);
+            // Fork: On Your Own removed from the menus; it also switched looting on, whatever the setting said.
             menu.RegisterCommand(Locales.REGROUPCOMMAND_NAME, Locales.REGROUPCOMMAND_TARGETNAME, ECommandType.Regroup.ToString(), mcsBotPlayers);
             menu.RegisterCommand(C2Sain.ForkText.Get("McsFork/BreakOff Name"), "McsFork/BreakOff TargetName", ECommandType.FollowMe.ToString(), mcsBotPlayers);
+            // Fork: Engage Enemy orders (C2Sain/EngageTactics.cs).
+            menu.RegisterCommand(C2Sain.ForkText.Get("McsFork/Engage Name"), "McsFork/Engage TargetName", ECommandType.EngageEnemy.ToString(), mcsBotPlayers);
+            menu.RegisterCommand(C2Sain.ForkText.Get("McsFork/EngageReckless Name"), "McsFork/EngageReckless TargetName", ECommandType.EngageEnemyReckless.ToString(), mcsBotPlayers);
             menu.RegisterCommand(Locales.GOTOPOINTCOMMAND_NAME, Locales.GOTOPOINTCOMMAND_TARGETNAME, ECommandType.GoToPoint.ToString(), mcsBotPlayers, resolver: () => Physics.Raycast(Singleton<GameWorld>.Instance.MainPlayer.InteractionRay,
             out var hit, float.MaxValue, LayersMaskController.HighPolyWithTerrainMask)
             ? new McsCommandContext { Position = hit.point } : null);
@@ -222,7 +246,8 @@ namespace MiyakoCarryService.Client.Mgrs
             menu.RegisterSubMenu(Locales.CHANGEAIMINGBODYPARTTYPECOMMAND_NAME, Locales.CHANGEAIMINGBODYPARTTYPECOMMAND_TARGETNAME, m => BuildAimingMenu(m, mcsBotPlayers, false));
             menu.RegisterSubMenu(Locales.ESCORTCOMMAND_NAME, Locales.ESCORTCOMMAND_TARGETNAME, m => BuildEscortMenu(m, mcsBotPlayers, false));
             menu.RegisterSubMenu(Locales.PROXYCOMMAND_NAME, Locales.PROXYCOMMAND_TARGETNAME, m => BuildProxyMenu(m, mcsBotPlayers, false));
-            menu.RegisterCommand(Locales.CLEARAREACOMMAND_NAME, Locales.CLEARAREACOMMAND_TARGETNAME, ECommandType.ClearArea.ToString(), mcsBotPlayers, resolver: () => Physics.Raycast(Singleton<GameWorld>.Instance.MainPlayer.InteractionRay,
+            // Fork: renamed Clear Target Area; refused in contact (ClearAreaCommandAction).
+            menu.RegisterCommand(C2Sain.ForkText.Get("McsFork/ClearTargetArea Name"), "McsFork/ClearTargetArea TargetName", ECommandType.ClearArea.ToString(), mcsBotPlayers, resolver: () => Physics.Raycast(Singleton<GameWorld>.Instance.MainPlayer.InteractionRay,
             out var hit, float.MaxValue, LayersMaskController.HighPolyWithTerrainMask)
             ? new McsCommandContext { Position = hit.point } : null);
             menu.RegisterCommand(Locales.FORCETELEPORTCOMMAND_NAME, Locales.FORCETELEPORTCOMMAND_TARGETNAME, ECommandType.Teleport.ToString(), mcsBotPlayers);
@@ -1110,6 +1135,11 @@ namespace MiyakoCarryService.Client.Mgrs
 
             var mcsBotPlayerData = botOwner.GetMcsBotPlayerData();
             if (mcsBotPlayerData == null)
+            {
+                return;
+            }
+            // Fork: Clear Target Area is refused while the squad is in contact.
+            if (C2Sain.ForkCommands.RefuseInContact(botOwner, mcsBotPlayerData))
             {
                 return;
             }

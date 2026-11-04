@@ -257,6 +257,7 @@ namespace MiyakoCarryService.Client
             _patches.Add(new AvailableInteractionStateSetterPatch());
             _patches.Add(new FindDamagedPartPatch());
             _patches.Add(new C2Sain.Patches.SainSetDecisionsPatch());
+            _patches.Add(new C2Sain.Patches.SainFoliageSightPatch()); // Fork: carry bots see out of their bush.
 
             if (FikaInstalled)
             {

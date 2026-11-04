@@ -24,6 +24,10 @@ namespace MiyakoCarryService.Client.Enums
         FollowMe,
         EscortBtr,
         ExcludeOrTakeOver,
+        // Fork: the C2/SAIN fork's commands (C2Sain/ForkCommands.cs, C2Sain/ContactReports.cs).
+        SpotEnemy,
+        EngageEnemy,
+        EngageEnemyReckless,
 #if DEBUG
         DebugSpawnAI,
         DebugTeleport,

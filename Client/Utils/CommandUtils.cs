@@ -67,6 +67,7 @@ namespace MiyakoCarryService.Client.Utils
 
             if (_handlersMap.TryGetValue(ctx.CommandType, out var handler))
             {
+                C2Sain.ForkCommands.BeforeCommand(ctx); // Fork: any other order ends a running Engage order.
                 handler(ctx);
             }
         }

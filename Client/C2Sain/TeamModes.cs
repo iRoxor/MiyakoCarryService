@@ -1,9 +1,12 @@
 // TeamModes.cs -- one TeamModeMachine per player squad, ticked from the bots' layers.
 //
 // Owner of the per-squad mode state for the whole raid. C2Gate (C2 layer gate),
-// McsGuardLayer and ForkDebug call Get(); the first caller after 0.2 s ticks the
-// machine with the player's position and whether anyone in the squad is
-// engaged. BrainMgr.OnRaidEnded calls Clear(). No MonoBehaviour is involved.
+// McsGuardLayer, ForkCommands and ForkDebug call Get(); the first caller after
+// 0.2 s ticks the machine with the player's position and whether anyone in the
+// squad is engaged. ContactReports records contact reports (which also start
+// Guard at once) and the player's sightings; the guards look at the freshest of
+// the engagement threat, the report and the sighting. BrainMgr.OnRaidEnded calls
+// Clear(). No MonoBehaviour is involved.
 // Reads and writes no files; with "Debug: log mode changes" on it writes mode
 // changes to the BepInEx log.
 
@@ -28,6 +31,12 @@ namespace MiyakoCarryService.Client.C2Sain
         /// <summary>Seconds a recorded threat position stays useful for guards to look at.</summary>
         private const float THREAT_MEMORY = 10f;
 
+        /// <summary>Seconds a contact report ("I see the enemy") stays the guards' focus.</summary>
+        private const float REPORT_MEMORY = 30f;
+
+        /// <summary>Seconds a sighting handed over from the player's view stays a look target.</summary>
+        private const float SIGHTING_MEMORY = 10f;
+
         /// <summary>Seconds after the player hits an identified enemy during which the player counts as engaged.</summary>
         private const float PLAYER_SHOT_WINDOW = 3f;
 
@@ -38,6 +47,13 @@ namespace MiyakoCarryService.Client.C2Sain
             public bool HasThreat;
             public Vector3 ThreatPosition;
             public float ThreatTime = -999f;
+            public bool HasReport;
+            public Vector3 ReportPosition;
+            public float ReportTime = -999f;
+            public int ReportId;
+            public bool HasSighting;
+            public Vector3 SightingPosition;
+            public float SightingTime = -999f;
         }
 
         private static readonly Dictionary<string, Entry> _entries = new();
@@ -55,19 +71,84 @@ namespace MiyakoCarryService.Client.C2Sain
         }
 
         /// <summary>
-        /// Where the squad's current threat was last known (the engaged bot's goal enemy, or the
-        /// player's attacker), for guards to look toward. False when nothing recent is known.
+        /// Where guards should look: the squad's current threat (the engaged bot's goal enemy, or the
+        /// player's attacker) if recent, else a contact report under 30 s old, else a sighting from the
+        /// player's view under 10 s old. False when none of them is recent.
         /// </summary>
         public static bool TryGetThreat(McsAILeadPlayer lead, out Vector3 position)
         {
             var entry = GetEntry(lead);
-            if (entry != null && entry.HasThreat && Time.time - entry.ThreatTime <= THREAT_MEMORY)
+            var now = Time.time;
+            if (entry != null && entry.HasThreat && now - entry.ThreatTime <= THREAT_MEMORY)
             {
                 position = entry.ThreatPosition;
                 return true;
             }
+            if (entry != null && entry.HasReport && now - entry.ReportTime <= REPORT_MEMORY)
+            {
+                position = entry.ReportPosition;
+                return true;
+            }
+            if (entry != null && entry.HasSighting && now - entry.SightingTime <= SIGHTING_MEMORY)
+            {
+                position = entry.SightingPosition;
+                return true;
+            }
             position = default;
             return false;
+        }
+
+        /// <summary>
+        /// The contact report guards should face, while it is under 30 s old, with its id (it changes
+        /// with every report, so guards know to pick new spots). False when there is none.
+        /// </summary>
+        public static bool TryGetReport(McsAILeadPlayer lead, out Vector3 position, out int reportId)
+        {
+            var entry = GetEntry(lead);
+            if (entry != null && entry.HasReport && Time.time - entry.ReportTime <= REPORT_MEMORY)
+            {
+                position = entry.ReportPosition;
+                reportId = entry.ReportId;
+                return true;
+            }
+            position = default;
+            reportId = 0;
+            return false;
+        }
+
+        /// <summary>
+        /// Records an "I see the enemy" report and starts Guard at the player's position at once (a
+        /// Defend Me zone is left alone). Side effect: guards re-pick spots facing the mark.
+        /// </summary>
+        /// <param name="lead">The player's MCS lead object.</param>
+        /// <param name="mark">The reported enemy's position, or where the crosshair hit.</param>
+        /// <param name="playerPos">The player's position, the new Guard zone's centre.</param>
+        public static void ReportContact(McsAILeadPlayer lead, Vector3 mark, Vector3 playerPos)
+        {
+            var entry = GetEntry(lead);
+            if (entry == null)
+            {
+                return;
+            }
+            RefreshSettings();
+            entry.HasReport = true;
+            entry.ReportPosition = mark;
+            entry.ReportTime = Time.time;
+            entry.ReportId++;
+            entry.Machine.StartGuard(new V3(playerPos.x, playerPos.y, playerPos.z), _settings);
+        }
+
+        /// <summary>Records where the player saw an enemy (MCS's hand-over), as a short-lived look target.</summary>
+        public static void RecordSighting(McsAILeadPlayer lead, Vector3 position)
+        {
+            var entry = GetEntry(lead);
+            if (entry == null)
+            {
+                return;
+            }
+            entry.HasSighting = true;
+            entry.SightingPosition = position;
+            entry.SightingTime = Time.time;
         }
 
         /// <summary>Forgets every squad. Called at raid end.</summary>

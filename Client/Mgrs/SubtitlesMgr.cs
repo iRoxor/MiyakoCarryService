@@ -57,6 +57,10 @@ namespace MiyakoCarryService.Client.Mgrs
                 { EPhraseTrigger.Mine, Locales.MINE },
                 { EPhraseTrigger.OnFight, Locales.ONFIGHT },
                 { EPhraseTrigger.OnOutOfAmmo, Locales.ONOUTOFAMMO },
+                // Fork: voice lines the C2/SAIN fork's replies use (text in C2Sain/ForkText.cs).
+                { EPhraseTrigger.Gogogo, "McsFork/Talk Gogogo" },
+                { EPhraseTrigger.Covering, "McsFork/Talk Covering" },
+                { EPhraseTrigger.LostVisual, "McsFork/Talk LostVisual" },
                 // 空短语、临时内容，用于传递任意Key实现任何对话内容
                 { EPhraseTrigger.PhraseNone, "PhraseNone" }
             };
@@ -70,6 +74,11 @@ namespace MiyakoCarryService.Client.Mgrs
                 { EPhraseTrigger.Mine, HandlePhraseMine },
                 { EPhraseTrigger.Going, HandlePhraseWithOnFight },
                 { EPhraseTrigger.Negative, HandlePhraseWithOnFight },
+                // Fork: the fork's replies carry their own text as keys; upstream's keyless uses keep their text.
+                { EPhraseTrigger.Roger, C2Sain.ForkCommands.ReplaceWithKeys },
+                { EPhraseTrigger.Gogogo, C2Sain.ForkCommands.ReplaceWithKeys },
+                { EPhraseTrigger.Covering, C2Sain.ForkCommands.ReplaceWithKeys },
+                { EPhraseTrigger.LostVisual, C2Sain.ForkCommands.ReplaceWithKeys },
             };
 
             TasksExtensions.HandleExceptions(Init());

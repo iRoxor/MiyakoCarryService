@@ -5,8 +5,11 @@
 // 0.2 s ticks the machine with the player's position and whether anyone in the
 // squad is engaged. ContactReports records contact reports (which also start
 // Guard at once) and the player's sightings; the guards look at the freshest of
-// the engagement threat, the report and the sighting. BrainMgr.OnRaidEnded calls
-// Clear(). No MonoBehaviour is involved.
+// the engagement threat, the report and the sighting. It also owns each squad's
+// guard plan (GuardPlanner): McsGuardLayer asks GetGuardPost for its bot's post,
+// and the plan is remade when the player has moved REPLAN_MOVE m, a contact
+// report arrives or expires, or the number of living bots changes. BrainMgr.
+// OnRaidEnded calls Clear(). No MonoBehaviour is involved.
 // Reads and writes no files; with "Debug: log mode changes" on it writes mode
 // changes to the BepInEx log.
 
@@ -31,6 +34,9 @@ namespace MiyakoCarryService.Client.C2Sain
         /// <summary>Seconds a recorded threat position stays useful for guards to look at.</summary>
         private const float THREAT_MEMORY = 10f;
 
+        /// <summary>Metres the player may move before the squad's guard plan is made again.</summary>
+        private const float REPLAN_MOVE = 4f;
+
         /// <summary>Seconds a contact report ("I see the enemy") stays the guards' focus.</summary>
         private const float REPORT_MEMORY = 30f;
 
@@ -54,9 +60,22 @@ namespace MiyakoCarryService.Client.C2Sain
             public bool HasSighting;
             public Vector3 SightingPosition;
             public float SightingTime = -999f;
+            public GuardPlanState Plan;
+        }
+
+        /// <summary>A squad's guard plan: where it was made, under which report, for how many bots, and each bot's post.</summary>
+        private sealed class GuardPlanState
+        {
+            public Vector3 Anchor;
+            public int ReportId;
+            public int BotCount;
+            public readonly Dictionary<string, GuardPost> Posts = new();
         }
 
         private static readonly Dictionary<string, Entry> _entries = new();
+        private static readonly List<BotOwner> _members = new();
+        private static readonly List<V3> _botPoints = new();
+        private static readonly List<V3> _postPoints = new();
         private static readonly TeamModeSettings _settings = new();
         private static McsMgr McsMgr => field ??= MgrAccessor.Get<McsMgr>();
 
@@ -149,6 +168,110 @@ namespace MiyakoCarryService.Client.C2Sain
             entry.HasSighting = true;
             entry.SightingPosition = position;
             entry.SightingTime = Time.time;
+        }
+
+        /// <summary>
+        /// The post this bot should hold while guarding, from its squad's guard plan, which is made (or
+        /// made again) first when needed; see the file header. Null when the plan has no post for the bot
+        /// (the surroundings offered too few usable spots); the Guard layer then falls back to a follow spot.
+        /// </summary>
+        /// <param name="lead">The player's MCS lead object.</param>
+        /// <param name="bot">The carry bot asking.</param>
+        public static GuardPost GetGuardPost(McsAILeadPlayer lead, BotOwner bot)
+        {
+            var entry = GetEntry(lead);
+            var player = lead?.McsLeadPlayer;
+            if (entry == null || player == null || bot == null)
+            {
+                return null;
+            }
+
+            _members.Clear();
+            foreach (var member in McsMgr.GetAllAliveMcsSquadMembersByMcsLeadId(player.ProfileId))
+            {
+                var owner = member?.AIData?.BotOwner;
+                if (owner != null)
+                {
+                    _members.Add(owner);
+                }
+            }
+            var reportId = 0;
+            Vector3? threat = null;
+            if (TryGetReport(lead, out var reportPosition, out var id))
+            {
+                reportId = id;
+                threat = reportPosition;
+            }
+
+            var plan = entry.Plan;
+            if (plan == null || plan.ReportId != reportId || plan.BotCount != _members.Count
+                || Vector3.Distance(plan.Anchor, player.Position) > REPLAN_MOVE)
+            {
+                plan = entry.Plan = MakePlan(player, threat, reportId);
+            }
+            _members.Clear();
+            return plan.Posts.TryGetValue(bot.ProfileId, out var post) ? post : null;
+        }
+
+        /// <summary>
+        /// Plans posts for the bots in _members and gives each the post that keeps the squad's total walk
+        /// shortest (GuardFormation.Assign). Logs the plan when debug logging is on.
+        /// </summary>
+        private static GuardPlanState MakePlan(Player player, Vector3? threat, int reportId)
+        {
+            var state = new GuardPlanState { Anchor = player.Position, ReportId = reportId, BotCount = _members.Count };
+            var indoors = IsIndoors(player);
+            var minRange = ForkConfig.GuardPostMin?.Value ?? 3f;
+            var maxRange = Mathf.Max(minRange + 1f, ForkConfig.GuardPostMax?.Value ?? 12f);
+            var posts = GuardPlanner.Plan(player.Position, player.LookDirection, _members.Count, threat, indoors, minRange, maxRange);
+
+            _botPoints.Clear();
+            _postPoints.Clear();
+            foreach (var member in _members)
+            {
+                var p = member.Position;
+                _botPoints.Add(new V3(p.x, p.y, p.z));
+            }
+            foreach (var post in posts)
+            {
+                _postPoints.Add(new V3(post.Spot.x, post.Spot.y, post.Spot.z));
+            }
+            var assignment = GuardFormation.Assign(_botPoints, _postPoints);
+            for (var i = 0; i < _members.Count; i++)
+            {
+                if (assignment[i] >= 0)
+                {
+                    state.Posts[_members[i].ProfileId] = posts[assignment[i]];
+                }
+            }
+
+            if (ForkConfig.DebugLog?.Value == true)
+            {
+                McsLogger.LogInfo($"[{ForkInfo.Label}] guard plan for {player.Profile?.Nickname}: {(indoors ? "indoors" : "outdoors")}, "
+                    + $"{posts.Count} post(s) for {_members.Count} bot(s){(threat.HasValue ? ", facing a contact report" : "")}");
+            }
+            return state;
+        }
+
+        /// <summary>
+        /// True inside the game's indoor zones (the test SAIN uses for its bots: AIData.EnvironmentId is
+        /// not 0), or under a roof (solid geometry within 20 m straight above the player's head). The roof
+        /// test is a backstop: indoor plans keep posts out of side rooms, outdoor plans do not.
+        /// </summary>
+        private static bool IsIndoors(Player player)
+        {
+            try
+            {
+                if (player.AIData != null && player.AIData.EnvironmentId != 0)
+                {
+                    return true;
+                }
+            }
+            catch
+            {
+                // AIData can be missing on some player types; fall through to the roof test.
+            }
+            return Physics.Raycast(player.Position + Vector3.up * 1.8f, Vector3.up, 20f, LayersMaskController.HighPolyWithTerrainMask);
         }
 
         /// <summary>Forgets every squad. Called at raid end.</summary>

@@ -50,8 +50,8 @@ namespace MiyakoCarryService.Client.C2Sain
         /// <summary>True when the guard spot has cover or a bush toward GuardOutward, so the bot crouches there.</summary>
         public bool GuardSpotCovered;
 
-        /// <summary>Which contact report (TeamModes report id, 0 = none) the current guard spot faces.</summary>
-        public int GuardReportId;
+        /// <summary>Which plan gave the current guard spot (GuardPost.Kind, or "follow" for the fallback), for the overlay.</summary>
+        public string GuardPostKind = "";
 
         /// <summary>True when the Guard layer wants the bot to hurry (returning from a chase, far away, or flanking).</summary>
         public bool MoveFast;

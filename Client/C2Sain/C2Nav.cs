@@ -1,15 +1,15 @@
-// C2Nav.cs -- the fork's stricter spot picking for following, guarding and flanking.
+// C2Nav.cs -- the fork's stricter spot picking for following and flanking, and the reach and
+// cover tests the guard planner uses.
 //
-// Called by McsBaseLayer.UpdateLeadNearMoveTarget (follow spots), McsGuardLayer
-// (guard spots) and EngageTactics (flank points). Upstream MCS sampled "the
-// nearest navmesh point" around the player, which can lie behind a wall, in the
-// next room or on another floor, and the bot then pathed there through doors and
-// detours. Here a follow or guard spot counts only if it is "in the player's
-// space": within 1.5 m of the player's height and reachable from the player by a
-// straight line on the navmesh. Guard and flank spots are scored for hard cover
-// and bushes. Reads and writes no files; uses Unity's navmesh and physics queries.
+// Called by McsBaseLayer.UpdateLeadNearMoveTarget and McsGuardLayer (follow spots), EngageTactics
+// (flank points) and GuardPlanner (reach and cover tests). Upstream MCS sampled "the nearest
+// navmesh point" around the player, which can lie behind a wall, in the next room or on another
+// floor, and the bot then pathed there through doors and detours. Here a follow spot, and an
+// indoor guard post, counts only if it is "in the player's space": within 1.5 m of the player's
+// height and reachable from the player by a straight line on the navmesh. Outdoor guard posts
+// need only a short path (IsNearPlayerOnFoot). Reads and writes no files; uses Unity's navmesh
+// and physics queries.
 
-using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.AI;
 
@@ -52,6 +52,30 @@ namespace MiyakoCarryService.Client.C2Sain
         }
 
         /// <summary>
+        /// Outdoors: true when the spot is within 3 m of the player's height and either a straight line
+        /// across the navmesh from the player or a complete path no longer than 1.5 times the straight
+        /// distance plus 4 m. Looser than IsInPlayersSpace, which small navmesh holes (tree trunks, rocks)
+        /// make fail outdoors; indoor posts keep the strict test so they stay out of other rooms.
+        /// </summary>
+        public static bool IsNearPlayerOnFoot(Vector3 playerPos, Vector3 spot)
+        {
+            if (Mathf.Abs(spot.y - playerPos.y) > 3f)
+            {
+                return false;
+            }
+            if (!NavMesh.SamplePosition(playerPos, out var playerHit, 1.5f, NavMesh.AllAreas))
+            {
+                return false;
+            }
+            if (!NavMesh.Raycast(playerHit.position, spot, out _, NavMesh.AllAreas))
+            {
+                return true;
+            }
+            return TryCompletePath(playerHit.position, spot, out var corners)
+                && PathLength(playerHit.position, corners) <= Vector3.Distance(playerPos, spot) * 1.5f + 4f;
+        }
+
+        /// <summary>
         /// Picks a follow spot 1.5-4 m from the player, on the bot's side, in the player's space and
         /// reachable by the bot. Up to eight random tries.
         /// </summary>
@@ -86,86 +110,6 @@ namespace MiyakoCarryService.Client.C2Sain
             return false;
         }
 
-
-        /// <summary>
-        /// Picks a guard spot 2.5-8 m from the player inside the bot's sector. Scoring, toward the
-        /// direction the bot will watch (the reported threat when there is one, else outward):
-        /// low hard cover +2, a bush the bot can sit in or behind +1.5 (+0.5 next to hard cover),
-        /// a wall at eye height -1 (cannot see over it), another guard within 2 m -3. Bushes are
-        /// concealment rather than cover; carry bots can see out of them (SainFoliageSightPatch).
-        /// </summary>
-        /// <param name="playerPos">The player's position.</param>
-        /// <param name="botPos">The bot's position (the spot must be reachable from it).</param>
-        /// <param name="sectorYaw">Centre of this bot's sector, degrees around the player.</param>
-        /// <param name="otherSpots">Spots other guards already hold.</param>
-        /// <param name="threat">A reported threat to face, or null to watch outward.</param>
-        /// <param name="spot">The chosen spot.</param>
-        /// <param name="watch">Horizontal direction the bot should watch from the spot.</param>
-        /// <param name="covered">True when the spot has hard cover or a bush toward <paramref name="watch"/>.</param>
-        public static bool TryPickGuardSpot(Vector3 playerPos, Vector3 botPos, float sectorYaw, IReadOnlyList<Vector3> otherSpots,
-            Vector3? threat, out Vector3 spot, out Vector3 watch, out bool covered)
-        {
-            var bestScore = float.MinValue;
-            var best = default(Vector3);
-            var bestWatch = default(Vector3);
-            var bestCovered = false;
-            var found = false;
-
-            for (var attempt = 0; attempt < 16; attempt++)
-            {
-                var dir = Quaternion.Euler(0f, sectorYaw + Random.Range(-50f, 50f), 0f) * Vector3.forward;
-                var candidate = playerPos + dir * Random.Range(2.5f, 8f);
-                if (!NavMesh.SamplePosition(candidate, out var hit, 1f, NavMesh.AllAreas))
-                {
-                    continue;
-                }
-                var p = hit.position;
-                if (!IsInPlayersSpace(playerPos, p))
-                {
-                    continue;
-                }
-
-                var look = dir;
-                if (threat.HasValue)
-                {
-                    look = threat.Value - p;
-                    look.y = 0f;
-                    look = look.sqrMagnitude > 0.01f ? look.normalized : dir;
-                }
-
-                var score = ScoreCover(p, look, out var isCovered);
-                for (var i = 0; i < otherSpots.Count; i++)
-                {
-                    if ((otherSpots[i] - p).sqrMagnitude < 2f * 2f)
-                    {
-                        score -= 3f;
-                    }
-                }
-                score -= Random.value * 0.1f;
-
-                if (score > bestScore)
-                {
-                    bestScore = score;
-                    best = p;
-                    bestWatch = look;
-                    bestCovered = isCovered;
-                    found = true;
-                }
-            }
-
-            if (!found || !TryCompletePath(botPos, best, out _))
-            {
-                spot = default;
-                watch = default;
-                covered = false;
-                return false;
-            }
-
-            spot = best;
-            watch = bestWatch;
-            covered = bestCovered;
-            return true;
-        }
 
         /// <summary>
         /// Picks the end of a flank leg: a navmesh point off to one side of the enemy's last known
@@ -238,15 +182,24 @@ namespace MiyakoCarryService.Client.C2Sain
         private static readonly float[] FlankAngles = { 70f, 55f, 85f, 40f };
 
         /// <summary>
-        /// Cover score of a spot toward a direction; see TryPickGuardSpot for the weights.
-        /// <paramref name="covered"/> is true when there is hard cover or a bush.
+        /// Cover score of a spot toward a direction, looking 1.5 m ahead:
+        ///   hard cover at waist height (0.7 m)                      +2
+        ///   hard cover at eye height (1.6 m) that the bot can lean
+        ///     around (clear 0.6 m to either side): a trunk or rock  +1
+        ///   hard cover at eye height it cannot see past: a wall     -1
+        ///   a bush around or just ahead of the spot                 +1.5 (+0.5 next to hard cover)
+        /// <paramref name="covered"/> is true for waist-high cover, lean-around cover or a bush. Used by
+        /// GuardPlanner and the flank-point picker.
         /// </summary>
-        private static float ScoreCover(Vector3 p, Vector3 toward, out bool covered)
+        internal static float ScoreCover(Vector3 p, Vector3 toward, out bool covered)
         {
             var hard = LayersMaskController.HighPolyWithTerrainMask;
             var foliage = LayersMaskController.Foliage;
             var lowCover = Physics.Raycast(p + Vector3.up * 0.7f, toward, 1.5f, hard);
-            var eyeWall = Physics.Raycast(p + Vector3.up * 1.6f, toward, 1.5f, hard);
+            var eye = p + Vector3.up * 1.6f;
+            var eyeBlocked = Physics.Raycast(eye, toward, 1.5f, hard);
+            var side = Vector3.Cross(Vector3.up, toward).normalized * 0.6f;
+            var leanAround = eyeBlocked && (!Physics.Raycast(eye + side, toward, 1.5f, hard) || !Physics.Raycast(eye - side, toward, 1.5f, hard));
             var bush = Physics.CheckSphere(p + Vector3.up * 0.9f, 0.8f, foliage, QueryTriggerInteraction.Collide)
                 || Physics.Raycast(p + Vector3.up * 1.0f, toward, 2f, foliage, QueryTriggerInteraction.Collide);
 
@@ -255,20 +208,20 @@ namespace MiyakoCarryService.Client.C2Sain
             {
                 score += 2f;
             }
+            if (eyeBlocked)
+            {
+                score += leanAround ? 1f : -1f;
+            }
             if (bush)
             {
                 score += lowCover ? 0.5f : 1.5f;
             }
-            if (eyeWall)
-            {
-                score -= 1f;
-            }
-            covered = lowCover || bush;
+            covered = lowCover || leanAround || bush;
             return score;
         }
 
         /// <summary>Length of a path that starts at <paramref name="from"/> and runs through the corners.</summary>
-        private static float PathLength(Vector3 from, Vector3[] corners)
+        internal static float PathLength(Vector3 from, Vector3[] corners)
         {
             var length = 0f;
             var previous = from;

@@ -44,13 +44,16 @@ namespace MiyakoCarryService.Client.Bots.Brain.Logics
             var botWithin50 = botToLeaderSqrDistance < 50f * 50f;
             var leaderRelativeSpeed = leaderMovementContext.MaxSpeed > 0f ? leaderMovementContext.CharacterMovementSpeed / leaderMovementContext.MaxSpeed : 0f;
 
-            if (!BotOwner.Memory.HaveEnemy && botWithin50 && leaderMovementContext.IsInPronePose)
+            // Fork: copy the player's pose only while following or escorting, never on a job of the bot's
+            // own or in combat (upstream tested the game's enemy memory instead). C2Sain/MovePolicy.cs.
+            var copyPose = C2Sain.MovePolicy.CopiesLeaderPose(BotOwner, mcsBotPlayerData, botWithin50);
+            if (copyPose && leaderMovementContext.IsInPronePose)
             {
                 _baseLogic.DoorOpen();
                 BotOwner.BotLight?.TurnOff(false, true);
                 BotOwner.GoToSomePointData.UpdateToGo(false, 0f, leaderMovementContext.PoseLevel);
             }
-            else if (!BotOwner.Memory.HaveEnemy && botWithin50 && (leaderMovementContext.PoseLevel < 1f || leaderMovementContext.PoseLevel == 1f && leaderRelativeSpeed < 1f))
+            else if (copyPose && (leaderMovementContext.PoseLevel < 1f || leaderMovementContext.PoseLevel == 1f && leaderRelativeSpeed < 1f))
             {
                 _baseLogic.DoorOpen();
                 BotOwner.BotLight?.TurnOff(false, true);

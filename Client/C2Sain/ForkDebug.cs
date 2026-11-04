@@ -57,6 +57,12 @@ namespace MiyakoCarryService.Client.C2Sain
             {
                 _builder.Append('\n').Append("breaking off");
             }
+            if (!fork.C2Active && fork.HasGuardSpot && fork.GuardPostKind.Length > 0 && data.LeadPlayer != null)
+            {
+                _builder.Append('\n').Append("post: ").Append(fork.GuardPostKind).Append(", ")
+                    .Append(Vector3.Distance(fork.GuardSpot, data.LeadPlayer.Position).ToString("0")).Append(" m from you")
+                    .Append(fork.GuardSpotCovered ? ", in cover" : "");
+            }
             var personality = SainBridge.GetPersonality(SainBridge.GetSain(data.BotOwner));
             if (personality != null)
             {

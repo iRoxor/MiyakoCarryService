@@ -36,10 +36,27 @@ namespace MiyakoCarryService.Client.C2Sain
         ///    sightings. Falsifiers: an Engage order that leaves a bot more than 60 m from the
         ///    player after it ends, or carry bots shooting through bushes farther away than the
         ///    see-out radius, sends that part back.
+        ///  3 (2026-11-04) Test build 3, from the user's raid with build 2 ("performing
+        ///    phenomenally"; a Goons fight cost 2 of 4 carry bots, which the user wanted: a two-way
+        ///    fight). Neither build-2 falsifier was reported. Their notes: guards bunched on one side
+        ///    of the player, hugged the player too closely to use cover right beside them, and copied
+        ///    the player's crouch during Clear Area. Traced: each bot picked its own spot in its own
+        ///    sector and, when that sector had no usable spot, fell back to a follow spot on the side
+        ///    it stood on (bots trail the player, so all landed behind); and one ray from a random
+        ///    point rarely hits a tree trunk. Changed: guard posts are planned per squad
+        ///    (GuardPlanner): 2+ bots outdoors form an even detail 3-12 m out (setting), behind trees,
+        ///    rocks, walls, vehicles or bushes when near; indoors they post on the busiest approaches
+        ///    (routes traced to 12-35 m away, other floors included); a lone bot watches the
+        ///    player's back; contact reports still fan toward the mark. Lean-around cover (a trunk
+        ///    or rock) now scores as full cover. The player's pose is copied only while following or
+        ///    escorting (MovePolicy), so Escort crouch-walks with a crouching player and Clear Area,
+        ///    Go To Point, proxy tasks and Break off never copy it. Falsifiers: with 2+ bots, guards
+        ///    still ending up together on one side outdoors, or indoor posts inside side rooms rather
+        ///    than on hallways and stairs, sends the planner back for rework.
         /// </summary>
-        public const int ForkVersion = 2;
+        public const int ForkVersion = 3;
 
         /// <summary>Short label used in logs and the overlay.</summary>
-        public const string Label = "C2/SAIN fork v2";
+        public const string Label = "C2/SAIN fork v3";
     }
 }

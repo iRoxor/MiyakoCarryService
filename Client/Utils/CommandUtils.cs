@@ -82,6 +82,16 @@ namespace MiyakoCarryService.Client.Utils
             _cachedTriangulation ??= NavMesh.CalculateTriangulation();
         }
 
+        /// <summary>
+        /// Fork: the navmesh triangulation's vertices, cached for the raid as Clear Area caches them.
+        /// Read by the fork's guard planner (C2Sain/GuardPlanner.cs) to trace routes indoors.
+        /// </summary>
+        internal static Vector3[] GetNavMeshVertices()
+        {
+            _cachedTriangulation ??= NavMesh.CalculateTriangulation();
+            return _cachedTriangulation.Value.vertices;
+        }
+
         public static void ClearNavMeshCache()
         {
             _cachedTriangulation = null;

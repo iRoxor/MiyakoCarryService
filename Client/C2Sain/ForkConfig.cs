@@ -47,6 +47,8 @@ namespace MiyakoCarryService.Client.C2Sain
         public static ConfigEntry<float> IdleRadius;
         public static ConfigEntry<float> IdleSeconds;
         public static ConfigEntry<float> GuardRadius;
+        public static ConfigEntry<float> GuardPostMin;
+        public static ConfigEntry<float> GuardPostMax;
         public static ConfigEntry<float> CombatEndDelay;
         public static ConfigEntry<float> ChaseMinSeconds;
         public static ConfigEntry<float> ChaseMaxSeconds;
@@ -80,6 +82,8 @@ namespace MiyakoCarryService.Client.C2Sain
             IdleRadius = Float(plugin, "IdleRadius", 3f, 1f, 10f);
             IdleSeconds = Float(plugin, "IdleSeconds", 3f, 1f, 30f);
             GuardRadius = Float(plugin, "GuardRadius", 15f, 5f, 50f);
+            GuardPostMin = Float(plugin, "GuardPostMin", 3f, 1.5f, 8f);
+            GuardPostMax = Float(plugin, "GuardPostMax", 12f, 5f, 25f);
             CombatEndDelay = Float(plugin, "CombatEndDelay", 10f, 3f, 60f);
             ChaseMinSeconds = Float(plugin, "ChaseMin", 3f, 0f, 30f);
             ChaseMaxSeconds = Float(plugin, "ChaseMax", 5f, 0f, 60f);

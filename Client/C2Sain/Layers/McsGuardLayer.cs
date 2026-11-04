@@ -9,12 +9,12 @@
 //
 // Behaviour, in order:
 //   - flank leg: go to the leg's point, sprinting while far from it;
-//   - guard: pick a spot 2.5-8 m from the player in this bot's sector,
-//     preferring hard cover or a bush (C2Nav), walk there, then watch: outward,
-//     or toward a contact report ("I see the enemy"), whose spots fan out on the
-//     player's side facing the mark, or at a visible enemy or the squad's threat.
-// Writes the bot's fork state (guard spot, watch direction, cover flag, report
-// id, hurry flag). Reads and writes no files.
+//   - guard: go to this bot's post in the squad's guard plan (TeamModes.GetGuardPost,
+//     planned by GuardPlanner: a protection detail around the player outdoors,
+//     the approaches indoors, facing a contact report when there is one), then
+//     watch from it; with no post, fall back to a follow spot near the player.
+// Writes the bot's fork state (guard spot, watch direction, cover flag, post
+// kind, hurry flag). Reads and writes no files.
 
 using System;
 using System.Collections.Generic;
@@ -34,8 +34,8 @@ namespace MiyakoCarryService.Client.C2Sain.Layers
     /// <summary>Guard and flank-leg behaviour for carry bots when neither C2 nor SAIN is driving.</summary>
     public class McsGuardLayer : McsBaseLayer
     {
-        /// <summary>Re-pick the guard spot once the player has moved this far (m) from where it was picked.</summary>
-        private const float RESPOT_PLAYER_MOVE = 3f;
+        /// <summary>Re-pick a fallback follow spot once the player has moved this far (m) from where it was picked.</summary>
+        private const float RESPOT_PLAYER_MOVE = 4f;
 
         /// <summary>A bot this close (m) to its spot counts as there.</summary>
         private const float AT_SPOT = 1.25f;
@@ -43,15 +43,7 @@ namespace MiyakoCarryService.Client.C2Sain.Layers
         /// <summary>Seconds between re-evaluations while moving or watching.</summary>
         private const float EVAL_INTERVAL = 0.5f;
 
-        /// <summary>
-        /// Sector offsets (degrees from the direction of a reported contact) for the squad's guards, by
-        /// their order in the squad: they spread across the front facing the mark.
-        /// </summary>
-        private static readonly float[] ReportSectorOffsets = { -35f, 35f, -70f, 70f, 0f, -105f, 105f };
-
         private float _nextEval;
-        private readonly List<Vector3> _otherSpots = new();
-        private McsMgr McsMgr => field ??= MgrAccessor.Get<McsMgr>();
 
         /// <summary>Creates the layer; BigBrain calls this once per bot.</summary>
         public McsGuardLayer(BotOwner botOwner, int priority) : base(botOwner, priority)
@@ -105,11 +97,19 @@ namespace MiyakoCarryService.Client.C2Sain.Layers
                 var distanceToLead = Vector3.Distance(BotOwner.Position, leadPos);
                 fork.MoveFast = fork.Leash.Returning || distanceToLead > 15f;
 
-                var hasReport = TeamModes.TryGetReport(data.McsAILeadPlayer, out var reportPos, out var reportId);
-                var reportChanged = fork.GuardReportId != (hasReport ? reportId : 0);
-                if (!fork.HasGuardSpot || reportChanged || Vector3.Distance(fork.GuardSpotForPlayer, leadPos) > RESPOT_PLAYER_MOVE)
+                var post = TeamModes.GetGuardPost(data.McsAILeadPlayer, BotOwner);
+                if (post != null)
                 {
-                    PickSpot(data, leadPos, hasReport ? reportPos : null, hasReport ? reportId : 0);
+                    fork.HasGuardSpot = true;
+                    fork.GuardSpot = post.Spot;
+                    fork.GuardSpotForPlayer = leadPos;
+                    fork.GuardOutward = post.Watch;
+                    fork.GuardSpotCovered = post.Covered;
+                    fork.GuardPostKind = post.Kind;
+                }
+                else if (fork.GuardPostKind != "follow" || !fork.HasGuardSpot || Vector3.Distance(fork.GuardSpotForPlayer, leadPos) > RESPOT_PLAYER_MOVE)
+                {
+                    PickFollowSpot(fork, leadPos);
                 }
 
                 if (fork.HasGuardSpot && Vector3.Distance(BotOwner.Position, fork.GuardSpot) > AT_SPOT)
@@ -135,79 +135,24 @@ namespace MiyakoCarryService.Client.C2Sain.Layers
         }
 
         /// <summary>
-        /// Picks a guard spot in this bot's sector, falling back to a plain follow spot, and writes the
-        /// result to the fork state. Without a report, sectors split 360 degrees between the living squad
-        /// members; with one, they fan out across the front facing the mark.
+        /// Fallback when the squad's guard plan has no post for this bot: a follow spot near the player,
+        /// watching away from them. Writes the result to the fork state.
         /// </summary>
-        /// <param name="data">The bot's MCS data.</param>
-        /// <param name="leadPos">The player's position.</param>
-        /// <param name="threat">The reported contact to face, or null.</param>
-        /// <param name="reportId">The report's id (0 without one), remembered so a new report re-picks.</param>
-        private void PickSpot(Datas.McsBotPlayerData data, Vector3 leadPos, Vector3? threat, int reportId)
+        private void PickFollowSpot(BotForkState fork, Vector3 leadPos)
         {
-            var fork = data.Fork;
-            fork.GuardReportId = reportId;
-            _otherSpots.Clear();
-            var memberCount = 0;
-            var myIndex = 0;
-            foreach (var member in McsMgr.GetAllAliveMcsSquadMembersByMcsLeadId(data.LeadPlayer.ProfileId))
-            {
-                var otherOwner = member?.AIData?.BotOwner;
-                if (otherOwner == null)
-                {
-                    continue;
-                }
-                if (otherOwner == BotOwner)
-                {
-                    myIndex = memberCount;
-                }
-                else
-                {
-                    var otherFork = otherOwner.GetMcsBotPlayerData()?.Fork;
-                    if (otherFork != null && otherFork.HasGuardSpot)
-                    {
-                        _otherSpots.Add(otherFork.GuardSpot);
-                    }
-                }
-                memberCount++;
-            }
-
-            float sectorYaw;
-            if (threat.HasValue)
-            {
-                var toThreat = threat.Value - leadPos;
-                var yaw = Mathf.Atan2(toThreat.x, toThreat.z) * Mathf.Rad2Deg;
-                sectorYaw = yaw + ReportSectorOffsets[myIndex % ReportSectorOffsets.Length];
-            }
-            else
-            {
-                sectorYaw = 45f + myIndex * 360f / Math.Max(1, memberCount);
-            }
-
-            if (C2Nav.TryPickGuardSpot(leadPos, BotOwner.Position, sectorYaw, _otherSpots, threat, out var spot, out var watch, out var covered))
-            {
-                fork.HasGuardSpot = true;
-                fork.GuardSpot = spot;
-                fork.GuardSpotForPlayer = leadPos;
-                fork.GuardOutward = watch;
-                fork.GuardSpotCovered = covered;
-                return;
-            }
-
+            fork.GuardPostKind = "follow";
+            fork.GuardSpotCovered = false;
+            fork.GuardSpotForPlayer = leadPos;
             if (C2Nav.TryPickFollowSpot(leadPos, BotOwner.Position, out var followSpot, out _))
             {
-                var away = threat.HasValue ? threat.Value - followSpot : followSpot - leadPos;
+                var away = followSpot - leadPos;
                 away.y = 0f;
                 fork.HasGuardSpot = true;
                 fork.GuardSpot = followSpot;
-                fork.GuardSpotForPlayer = leadPos;
                 fork.GuardOutward = away;
-                fork.GuardSpotCovered = false;
                 return;
             }
-
             fork.HasGuardSpot = false;
-            fork.GuardSpotCovered = false;
         }
 
         /// <summary>Ends a guard move on arrival or at the next evaluation.</summary>

@@ -44,7 +44,7 @@ namespace MiyakoCarryService.Client.C2Sain
             ["McsFork/AllowedPersonalities Key"] = "SAIN: allowed carry bot personalities",
             ["McsFork/AllowedPersonalities Description"] = "SAIN rolls a personality for every bot, carry bots included. When it rolls one not ticked here, the bot is re-rolled until it gets a ticked one. Default: Normal, Chad, GigaChad and Wreckless (SnappingTurtle, Rat, Timmy and Coward are banned). Normal is balanced; Chad, GigaChad and Wreckless push progressively harder. Nothing ticked keeps SAIN's roll. Engage orders lend their own personality for their duration.",
             ["McsFork/EngageMax Key"] = "Engage: longest order (s)",
-            ["McsFork/EngageMax Description"] = "An Engage Enemy order ends after this long even if the enemy is still known. Default 90. It also ends once no enemy has been known for 8 s, or when you give another order.",
+            ["McsFork/EngageMax Description"] = "An Engage Enemy order ends after this long even if the enemy is still known. Default 90. It also ends about 40 s after the enemy was last seen, heard or reported (8 s after it dies), or when you give another order.",
             ["McsFork/EngageFlanking Key"] = "Engage: flanking",
             ["McsFork/EngageFlanking Description"] = "Engage Enemy sends bots around the side of the enemy's last known position before they search it; with two or more bots, one stays back to give covering fire. Default on. Off makes them push straight in, Chad-style.",
             ["McsFork/RecklessStyle Key"] = "Engage: reckless personality",

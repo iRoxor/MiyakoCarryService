@@ -8,6 +8,7 @@ using EFT;
 using EFT.UI.Screens;
 using MiyakoCarryService.Client.Datas;
 using MiyakoCarryService.Client.Extensions;
+using MiyakoCarryService.Client.Misc;
 using MiyakoCarryService.Client.Utils;
 using UnityEngine;
 
@@ -91,6 +92,8 @@ namespace MiyakoCarryService.Client.Mgrs
                             MiyakoCarryServicePlugin.LogBuffer.AddUsedBrain(baseBrain.ShortName());
                             MiyakoCarryServicePlugin.LogBuffer.AddUsedLayer(brain.ActiveLayerName());
                             MiyakoCarryServicePlugin.LogBuffer.AddUsedReason(brain.GetActiveNodeReason());
+                            // Fork: counts (and with the diagnostic log, logs) carry bots standing still in the open.
+                            C2Sain.OpenGroundWatch.Sample(mcsBotPlayerData, brain.ActiveLayerName(), brain.GetActiveNodeReason());
 
                             if (!LayerUtils.IsMcsBotPlayerInjected(mcsBotPlayerData.BotOwner))
                             {
@@ -205,114 +208,21 @@ namespace MiyakoCarryService.Client.Mgrs
                     var mcsAILeadPlayers = McsMgr.GetAllMcsAILeadPlayer();
                     foreach (var mcsAILeadPlayer in mcsAILeadPlayers)
                     {
-                        if (Time.time >= mcsAILeadPlayer.NextEnemyCleanupTime)
+                        // Fork: an exception thrown out of a coroutine ends it, so one fault used to stop the
+                        // player's sightings reaching the carry bots for the rest of the raid (see
+                        // McsAILeadPlayer.IsShutDown). The body moved to CheckLeadPlayerSeenEnemies unchanged;
+                        // C# allows no yield inside a try with a catch.
+                        try
                         {
-                            mcsAILeadPlayer.NextEnemyCleanupTime = Time.time + 3f;
-                            mcsAILeadPlayer.CleanupDeadEnemies();
+                            CheckLeadPlayerSeenEnemies(mcsAILeadPlayer);
                         }
-
-                        var leadPlayer = mcsAILeadPlayer.Player() as Player;
-                        var leadPlayerPos = leadPlayer.Position + Vector3.up * 1.6f;
-                        var playerDatas = GetDatas<PlayerData>();
-
-                        var leadVisibleEnemies = mcsAILeadPlayer.LeadVisibleEnemies;
-                        leadVisibleEnemies.Clear();
-
-                        Player reportTarget = null;
-                        var reportSqrDistance = float.MaxValue;
-
-                        Player aimingTarget = null;
-                        var aimingSqrDistance = float.MaxValue;
-
-                        foreach (var playerData in playerDatas)
+                        catch (Exception e)
                         {
-                            var target = playerData.Player;
-
-                            if (target == null || !target.HealthController.IsAlive)
+                            if (Time.time >= _nextSeenEnemiesErrorTime)
                             {
-                                continue;
+                                _nextSeenEnemiesErrorTime = Time.time + 30f;
+                                Debug.LogException(e);
                             }
-
-                            if (!target.IsAI)
-                            {
-                                continue;
-                            }
-
-                            if (McsMgr.IsMcsBotPlayer(target.ProfileId))
-                            {
-                                continue;
-                            }
-
-                            var targetBotOwner = target.AIData?.BotOwner;
-                            if (targetBotOwner != null && targetBotOwner.BotState != EBotState.NonActive)
-                            {
-                                var targetGoalEnemy = targetBotOwner.Memory?.GoalEnemy;
-                                if (targetGoalEnemy?.Person != null
-                                    && targetGoalEnemy.Person.ProfileId == leadPlayer.ProfileId
-                                    && (targetGoalEnemy.IsVisible || targetGoalEnemy.CanShoot || targetBotOwner.ShootData?.Shooting == true))
-                                {
-                                    var aimSqrDistance = target.Position.McsSqrDistance(leadPlayer.Position);
-                                    if (aimSqrDistance < 300f * 300f && aimSqrDistance < aimingSqrDistance)
-                                    {
-                                        aimingTarget = target;
-                                        aimingSqrDistance = aimSqrDistance;
-                                    }
-                                }
-                            }
-
-                            if (leadPlayer.Side == EPlayerSide.Savage && target.Side == EPlayerSide.Savage && !leadPlayer.BotsGroup.IsEnemy(target))
-                            {
-                                continue;
-                            }
-
-                            var sqrDistance = target.Position.McsSqrDistance(leadPlayer.Position);
-                            if (sqrDistance >= 150f * 150f)
-                            {
-                                continue;
-                            }
-
-                            var dirToTarget = target.Position - leadPlayer.Position;
-                            var angle = Vector3.Angle(leadPlayer.LookDirection, dirToTarget);
-                            if (angle > 45f)
-                            {
-                                continue;
-                            }
-
-                            var blocked = Physics.Linecast(
-                                leadPlayerPos,
-                                target.Position + Vector3.up * 1.6f,
-                                out var raycastHit,
-                                LayersMaskController.HighPolyWithTerrainMask
-                            );
-
-                            if (blocked)
-                            {
-                                continue;
-                            }
-
-                            leadVisibleEnemies.Add(target);
-
-                            if (sqrDistance < reportSqrDistance)
-                            {
-                                reportTarget = target;
-                                reportSqrDistance = sqrDistance;
-                            }
-                        }
-
-                        if (leadVisibleEnemies.Count > 1)
-                        {
-                            leadVisibleEnemies.Sort((a, b) => a.Position.McsSqrDistance(leadPlayer.Position).CompareTo(b.Position.McsSqrDistance(leadPlayer.Position)));
-                        }
-
-                        if (reportTarget != null)
-                        {
-                            mcsAILeadPlayer.CalcGoalEnemy(reportTarget);
-                        }
-
-                        if (aimingTarget != null)
-                        {
-                            mcsAILeadPlayer.MarkLeadAimingEnemy(aimingTarget);
-                            mcsAILeadPlayer.CalcGoalEnemy(aimingTarget);
                         }
 
                         yield return publicTime;
@@ -323,6 +233,133 @@ namespace MiyakoCarryService.Client.Mgrs
                     yield return null;
                     continue;
                 }
+            }
+        }
+
+        /// <summary>
+        /// Fork: earliest time the next exception from the sighting loop is logged (at most one per 30 s,
+        /// through Unity's log, so it still reaches the debug dump and the game's errors log).
+        /// Owned by CheckMcsLeadPlayerSeenEnemiesLoop.
+        /// </summary>
+        private float _nextSeenEnemiesErrorTime;
+
+        /// <summary>
+        /// One player's pass of CheckMcsLeadPlayerSeenEnemiesLoop (upstream's loop body, moved here by the
+        /// fork unchanged): finds the AI enemies the player can see within 150 m and 45 degrees of their
+        /// view, and the nearest one aiming at the player, and hands them to the carry bots
+        /// (McsAILeadPlayer.CalcGoalEnemy). Every 3 s also clears dead enemies from the bots' tables.
+        /// </summary>
+        /// <param name="mcsAILeadPlayer">The player's MCS lead object.</param>
+        private void CheckLeadPlayerSeenEnemies(McsAILeadPlayer mcsAILeadPlayer)
+        {
+            if (Time.time >= mcsAILeadPlayer.NextEnemyCleanupTime)
+            {
+                mcsAILeadPlayer.NextEnemyCleanupTime = Time.time + 3f;
+                mcsAILeadPlayer.CleanupDeadEnemies();
+            }
+
+            var leadPlayer = mcsAILeadPlayer.Player() as Player;
+            var leadPlayerPos = leadPlayer.Position + Vector3.up * 1.6f;
+            var playerDatas = GetDatas<PlayerData>();
+
+            var leadVisibleEnemies = mcsAILeadPlayer.LeadVisibleEnemies;
+            leadVisibleEnemies.Clear();
+
+            Player reportTarget = null;
+            var reportSqrDistance = float.MaxValue;
+
+            Player aimingTarget = null;
+            var aimingSqrDistance = float.MaxValue;
+
+            foreach (var playerData in playerDatas)
+            {
+                var target = playerData.Player;
+
+                if (target == null || !target.HealthController.IsAlive)
+                {
+                    continue;
+                }
+
+                if (!target.IsAI)
+                {
+                    continue;
+                }
+
+                if (McsMgr.IsMcsBotPlayer(target.ProfileId))
+                {
+                    continue;
+                }
+
+                var targetBotOwner = target.AIData?.BotOwner;
+                if (targetBotOwner != null && targetBotOwner.BotState != EBotState.NonActive)
+                {
+                    var targetGoalEnemy = targetBotOwner.Memory?.GoalEnemy;
+                    if (targetGoalEnemy?.Person != null
+                        && targetGoalEnemy.Person.ProfileId == leadPlayer.ProfileId
+                        && (targetGoalEnemy.IsVisible || targetGoalEnemy.CanShoot || targetBotOwner.ShootData?.Shooting == true))
+                    {
+                        var aimSqrDistance = target.Position.McsSqrDistance(leadPlayer.Position);
+                        if (aimSqrDistance < 300f * 300f && aimSqrDistance < aimingSqrDistance)
+                        {
+                            aimingTarget = target;
+                            aimingSqrDistance = aimSqrDistance;
+                        }
+                    }
+                }
+
+                if (leadPlayer.Side == EPlayerSide.Savage && target.Side == EPlayerSide.Savage && !leadPlayer.BotsGroup.IsEnemy(target))
+                {
+                    continue;
+                }
+
+                var sqrDistance = target.Position.McsSqrDistance(leadPlayer.Position);
+                if (sqrDistance >= 150f * 150f)
+                {
+                    continue;
+                }
+
+                var dirToTarget = target.Position - leadPlayer.Position;
+                var angle = Vector3.Angle(leadPlayer.LookDirection, dirToTarget);
+                if (angle > 45f)
+                {
+                    continue;
+                }
+
+                var blocked = Physics.Linecast(
+                    leadPlayerPos,
+                    target.Position + Vector3.up * 1.6f,
+                    out var raycastHit,
+                    LayersMaskController.HighPolyWithTerrainMask
+                );
+
+                if (blocked)
+                {
+                    continue;
+                }
+
+                leadVisibleEnemies.Add(target);
+
+                if (sqrDistance < reportSqrDistance)
+                {
+                    reportTarget = target;
+                    reportSqrDistance = sqrDistance;
+                }
+            }
+
+            if (leadVisibleEnemies.Count > 1)
+            {
+                leadVisibleEnemies.Sort((a, b) => a.Position.McsSqrDistance(leadPlayer.Position).CompareTo(b.Position.McsSqrDistance(leadPlayer.Position)));
+            }
+
+            if (reportTarget != null)
+            {
+                mcsAILeadPlayer.CalcGoalEnemy(reportTarget);
+            }
+
+            if (aimingTarget != null)
+            {
+                mcsAILeadPlayer.MarkLeadAimingEnemy(aimingTarget);
+                mcsAILeadPlayer.CalcGoalEnemy(aimingTarget);
             }
         }
 

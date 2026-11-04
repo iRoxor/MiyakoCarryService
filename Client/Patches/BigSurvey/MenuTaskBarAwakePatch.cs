@@ -105,7 +105,8 @@ public sealed class MenuTaskBarAwakePatch : ModulePatch
                     var stringBuilder = new StringBuilder();
                     stringBuilder.Append("```log\n");
                     stringBuilder.Append("- DateTime: ").Append(DateTime.Now.ToString("yyyy-MM-dd HH-mm-ss")).Append("\n");
-                    stringBuilder.Append("- Mcs Version: ").Append(MiyakoCarryServicePlugin.ClientVersion).Append("\n");
+                    // Fork: the version stays 1.1.4.100 across fork builds, so name the build as well.
+                    stringBuilder.Append("- Mcs Version: ").Append(MiyakoCarryServicePlugin.ClientVersion).Append(" (").Append(C2Sain.ForkInfo.Label).Append(")\n");
                     stringBuilder.Append("- EFT Version: ").Append(BuildInfo.string_0).Append("\n")
                         .Append("- SPT Version: ").Append(Json.Deserialize<VersionResponse>(RequestHandler.GetJson("/singleplayer/settings/version")).Version).Append("\n")
                         .Append("- System: ").Append(SystemInfo.operatingSystem).Append("\n")
@@ -178,7 +179,9 @@ public sealed class MenuTaskBarAwakePatch : ModulePatch
             sectionsBuilder.Append('\n').Append($"  [Raid#{raidUsedInfo.RaidIndex} {raidUsedInfo.LocationId}]:")
                 .Append('\n').Append("  - Used Brain: ").Append(FormatRaidUsedEntries(raidUsedInfo.UsedBrains))
                 .Append('\n').Append("  - Used Layer: ").Append(FormatRaidUsedEntries(raidUsedInfo.UsedLayers))
-                .Append('\n').Append("  - Used Reason: ").Append(FormatRaidUsedEntries(raidUsedInfo.UsedReasons));
+                .Append('\n').Append("  - Used Reason: ").Append(FormatRaidUsedEntries(raidUsedInfo.UsedReasons))
+                // Fork: seconds carry bots stood still with nothing solid within 1.5 m and no bush within 1 m, by reason (C2Sain/OpenGroundWatch).
+                .Append('\n').Append("  - Still In The Open (s): ").Append(raidUsedInfo.OpenGroundReasons.IsEmpty ? "none" : FormatRaidUsedEntries(raidUsedInfo.OpenGroundReasons));
         }
 
         return sectionsBuilder.ToString();

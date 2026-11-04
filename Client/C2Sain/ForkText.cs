@@ -71,8 +71,8 @@ namespace MiyakoCarryService.Client.C2Sain
             ["McsFork/GapCrossing Description"] = "Upstream MCS's shortcuts: vaulting through windows and over walls, dropping off ledges, and warping onto the navmesh. Default off. This is what made bots clip into walls and unreachable spots.",
             ["McsFork/McsFastDoors Key"] = "Movement: MCS fast doors",
             ["McsFork/McsFastDoors Description"] = "Upstream MCS's own door handling, which opens doors instantly and ignores the game's rule on which doors may be opened. Default off: the game's and SAIN's door handling are used instead.",
-            ["McsFork/DebugLog Key"] = "Debug: log mode changes",
-            ["McsFork/DebugLog Description"] = "Write squad mode changes and leash events to the BepInEx log. Default off.",
+            ["McsFork/DebugLog Key"] = "Debug: diagnostic log",
+            ["McsFork/DebugLog Description"] = "Write what the carry bots decide to BepInEx\\LogOutput.log: squad mode changes, cut chases, contact reports, Engage orders, personality re-rolls, every guard plan with each bot's post and its cover, and any bot that has stood still in the open for 5 s (with what it was doing). Turn it on when you want to report a problem. Default off.",
 
             // Commands.
             ["McsFork/BreakOff Name"] = "Break off from combat",

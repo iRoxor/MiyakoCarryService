@@ -130,7 +130,8 @@ namespace MiyakoCarryService.Client.Misc
             foreach (var mcsBotPlayer in mcsBotPlayers)
             {
                 var botOwner = mcsBotPlayer?.BotOwner;
-                if (botOwner == null || botOwner.EnemiesController == null)
+                // Fork: a dead carry bot's enemy table no longer matters, and its brain is shut down.
+                if (botOwner == null || botOwner.EnemiesController == null || IsShutDown(mcsBotPlayer, botOwner))
                 {
                     continue;
                 }
@@ -205,6 +206,12 @@ namespace MiyakoCarryService.Client.Misc
             {
                 var botOwner = mcsBotPlayer.BotOwner;
 
+                // Fork: the squad list still holds dead carry bots; handing one an enemy threw (see IsShutDown).
+                if (IsShutDown(mcsBotPlayer, botOwner))
+                {
+                    continue;
+                }
+
                 // 敌人表接近 EFT 硬上限时先腾位置，腾不出来就放弃这次加敌，绝不把表灌到崩溃线
                 if (!Tools.TryMakeRoomForEnemy(botOwner))
                 {
@@ -214,8 +221,8 @@ namespace MiyakoCarryService.Client.Misc
                 McsLeadPlayer.BotsGroup.AddEnemy(seenEnemy, EBotEnemyCause.callForHelp2);
 
                 // Fork: a bot SAIN manages gets a squadmate sighting instead of a forced "visible" goal
-                // enemy (which let it shoot at what only the player could see, and threw a
-                // NullReferenceException in EnemyInfo.SetVisible in the user's raid). C2Sain/ContactReports.cs.
+                // enemy, which let it shoot at what only the player could see. C2Sain/ContactReports.cs.
+                // (The NullReferenceException once blamed on this path came from dead bots; see IsShutDown.)
                 if (C2Sain.ContactReports.ShareSighting(botOwner, seenEnemy))
                 {
                     continue;
@@ -238,6 +245,23 @@ namespace MiyakoCarryService.Client.Misc
                 botOwner.Memory.GoalEnemy = enemyInfo;
                 enemyInfo.PriorityIndex = 0;
             }
+        }
+
+        /// <summary>
+        /// Fork: true for a carry bot whose brain the game has shut down: dead, or removed from the map.
+        /// The game's BotOwner.OnDied and BotLeaveData.RemoveFromMap call BotOwner.Dispose, which sets
+        /// EnemyChooser (among other parts) to null, and SAIN drops the bot at the same moment. The squad
+        /// list (GetAllMcsSquadMembersByMcsLeadId) still returns such bots, so CalcGoalEnemy fell through to
+        /// TryRegisterEnemyForFollower, whose EnemyInfo.SetVisible ran BotCalcGoal.CalcGoalForBot on the
+        /// null EnemyChooser. That NullReferenceException (user's Woods raid, 2026-11-04 16:07, fork v3;
+        /// also once with fork v1) ended PlayerDataMgr's once-a-second sighting loop for the rest of the raid.
+        /// </summary>
+        /// <param name="mcsBotPlayer">The carry bot's player.</param>
+        /// <param name="botOwner">Its bot owner; null counts as shut down.</param>
+        private static bool IsShutDown(Player mcsBotPlayer, BotOwner botOwner)
+        {
+            return botOwner == null || botOwner.IsDead || botOwner.EnemyChooser == null
+                || mcsBotPlayer?.HealthController == null || !mcsBotPlayer.HealthController.IsAlive;
         }
 
         private bool TryRegisterEnemyForFollower(BotOwner botOwner, Player seenEnemy, out EnemyInfo enemyInfo)

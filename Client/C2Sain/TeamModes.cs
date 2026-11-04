@@ -10,8 +10,9 @@
 // and the plan is remade when the player has moved REPLAN_MOVE m, a contact
 // report arrives or expires, or the number of living bots changes. BrainMgr.
 // OnRaidEnded calls Clear(). No MonoBehaviour is involved.
-// Reads and writes no files; with "Debug: log mode changes" on it writes mode
-// changes to the BepInEx log.
+// Reads and writes no files; with "Debug: diagnostic log" on it writes mode
+// changes and every guard plan (each bot's post, its cover and the bot's path to
+// it, from GuardPlanner.DescribePost) to the BepInEx log.
 
 using System.Collections.Generic;
 using Comfort.Common;
@@ -249,6 +250,12 @@ namespace MiyakoCarryService.Client.C2Sain
             {
                 McsLogger.LogInfo($"[{ForkInfo.Label}] guard plan for {player.Profile?.Nickname}: {(indoors ? "indoors" : "outdoors")}, "
                     + $"{posts.Count} post(s) for {_members.Count} bot(s){(threat.HasValue ? ", facing a contact report" : "")}");
+                for (var i = 0; i < _members.Count; i++)
+                {
+                    var post = assignment[i] >= 0 ? posts[assignment[i]] : null;
+                    McsLogger.LogInfo($"[{ForkInfo.Label}]   {_members[i].Profile?.Nickname}: "
+                        + GuardPlanner.DescribePost(player.Position, player.LookDirection, _members[i].Position, post));
+                }
             }
             return state;
         }

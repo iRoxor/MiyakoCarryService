@@ -1,9 +1,11 @@
 // ForkInfo.cs -- identity of the C2/SAIN fork build.
 //
-// Read by MiyakoCarryServiceClient.Start (startup log line) and ForkDebug (the
-// in-raid debug overlay), so a log or screenshot names the build it came from.
-// This fork keeps no analyzable records (it writes only to the BepInEx log), so
-// one behaviour counter is enough; there is no schema version.
+// Read by MiyakoCarryServiceClient.Start (startup log line), ForkDebug (the
+// in-raid debug overlay) and, since v4, MenuTaskBarAwakePatch (MCS's debug dump),
+// so a log, screenshot or dump names the build it came from. The fork's only
+// records are the BepInEx log and that dump, a one-off report per session that
+// nobody pools across builds, so one behaviour counter is enough; there is no
+// schema version.
 
 namespace MiyakoCarryService.Client.C2Sain
 {
@@ -53,10 +55,31 @@ namespace MiyakoCarryService.Client.C2Sain
         ///    Go To Point, proxy tasks and Break off never copy it. Falsifiers: with 2+ bots, guards
         ///    still ending up together on one side outdoors, or indoor posts inside side rooms rather
         ///    than on hallways and stairs, sends the planner back for rework.
+        ///  4 (2026-11-04) Test build 4: a crash fix and diagnostics; guard behaviour is unchanged
+        ///    from v3. From the user's Woods raid with v3 (debug dump 16-31-59; the game's errors.log,
+        ///    16:07:15, about 10 minutes in): one NullReferenceException in the game's
+        ///    BotCalcGoal.CalcGoalForBot under MCS's CalcGoalEnemy, the same stack as the one in v1's
+        ///    dump. Traced: MCS's squad list still returns dead carry bots; the game disposes a dead
+        ///    bot's BotOwner (EnemyChooser set to null) and SAIN drops it, so the fork's sighting
+        ///    hand-over declined it and upstream's TryRegisterEnemyForFollower ran the game's goal
+        ///    calculation on the disposed bot. The exception ended MCS's once-a-second sighting
+        ///    coroutine for the rest of the raid: no more of the player's sightings, aiming-enemy
+        ///    marks or dead-enemy cleanup after the first carry bot died. Fixed: dead and shut-down
+        ///    bots are skipped (McsAILeadPlayer.IsShutDown), and the loop survives any later exception,
+        ///    logged at most once per 30 s. The user also still sees carry bots standing in the open,
+        ///    and the dump's bot-second counts cannot say in which state (C2Sain:ToGuardSpot 248,
+        ///    C2Sain:WatchFromCover 218, Mcs:Default 92, C2Sain:Watch 45), so this build only adds
+        ///    diagnostics: the dump gains "Still In The Open (s)" by reason and names the fork build,
+        ///    and the diagnostic log (renamed from "log mode changes"; same config key) gains every
+        ///    guard post with its cover and path, plus a line when a bot has stood still in the open
+        ///    for 5 s (OpenGroundWatch). The dump's Used Brain/Layer/Reason counts keep their meaning,
+        ///    so comparing them with v3 dumps is unrestricted. Falsifier: the same exception
+        ///    (BotCalcGoal.CalcGoalForBot under TryRegisterEnemyForFollower) in any later dump means
+        ///    the shut-down test is wrong.
         /// </summary>
-        public const int ForkVersion = 3;
+        public const int ForkVersion = 4;
 
         /// <summary>Short label used in logs and the overlay.</summary>
-        public const string Label = "C2/SAIN fork v3";
+        public const string Label = "C2/SAIN fork v4";
     }
 }

@@ -19,6 +19,8 @@ namespace MiyakoCarryService.Client.Utils
             public ConcurrentDictionary<string, int> UsedBrains = new();
             public ConcurrentDictionary<string, int> UsedLayers = new();
             public ConcurrentDictionary<string, int> UsedReasons = new();
+            /// <summary>Fork: samples (about one a second) of a carry bot standing still in the open, by the reason its brain was running. Written by C2Sain/OpenGroundWatch.</summary>
+            public ConcurrentDictionary<string, int> OpenGroundReasons = new();
         }
 
         private readonly ConcurrentDictionary<string, LogEntry> _entries = new();
@@ -119,6 +121,17 @@ namespace MiyakoCarryService.Client.Utils
                 times += 1;
                 return times;
             });
+        }
+
+        /// <summary>Fork: counts one sample of a carry bot standing still in the open under <paramref name="reason"/> (C2Sain/OpenGroundWatch).</summary>
+        public void AddOpenGroundReason(string reason)
+        {
+            if (_currentRaidRecord == null || reason == null)
+            {
+                return;
+            }
+
+            _currentRaidRecord.OpenGroundReasons.AddOrUpdate(reason, 1, (_, times) => times + 1);
         }
 
         public List<RaidUsedInfo> GetRaidUsedInfos()

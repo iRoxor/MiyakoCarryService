@@ -1,7 +1,8 @@
 // GuardPlanner.cs -- where each carry bot stands while the squad guards the player.
 //
 // Called by TeamModes.GetGuardPost when a squad's guard plan is made or remade (no plan yet, the
-// player moved, a contact report arrived or expired, or a bot died). Uses Unity's navmesh and
+// player moved, a contact report arrived or expired, or a bot died), and by TeamModes.MakePlan for
+// the diagnostic log's line per post (DescribePost). Uses Unity's navmesh and
 // physics queries and MCS's cached navmesh triangulation (CommandUtils.GetNavMeshVertices). Reads
 // and writes no files.
 //
@@ -446,6 +447,43 @@ namespace MiyakoCarryService.Client.C2Sain
             }
             point = default;
             return false;
+        }
+
+        /// <summary>
+        /// For the diagnostic log only: one bot's post as planned, e.g. "detail post 9 m from you, 45 deg
+        /// right of your view, with cover (bush); walk 11 m". Flags a post the bot has no complete navmesh
+        /// path to, since the bot then stops short of it. Runs one path query.
+        /// </summary>
+        /// <param name="player">The player's position when the plan was made.</param>
+        /// <param name="look">The player's view direction then.</param>
+        /// <param name="botPos">The bot's position.</param>
+        /// <param name="post">The bot's post, or null when the plan left it without one.</param>
+        internal static string DescribePost(Vector3 player, Vector3 look, Vector3 botPos, GuardPost post)
+        {
+            if (post == null)
+            {
+                return "no post (follows you instead)";
+            }
+            var toPost = post.Spot - player;
+            toPost.y = 0f;
+            look.y = 0f;
+            var angle = look.sqrMagnitude > 0.0001f && toPost.sqrMagnitude > 0.0001f ? Vector3.SignedAngle(look, toPost, Vector3.up) : 0f;
+            var path = new NavMeshPath();
+            string walk;
+            if (!NavMesh.CalculatePath(botPos, post.Spot, NavMesh.AllAreas, path))
+            {
+                walk = "NO PATH from the bot";
+            }
+            else if (path.status != NavMeshPathStatus.PathComplete)
+            {
+                walk = "NO COMPLETE PATH from the bot (it will stop short)";
+            }
+            else
+            {
+                walk = $"walk {C2Nav.PathLength(botPos, path.corners):0} m";
+            }
+            return $"{post.Kind} post {toPost.magnitude:0} m from you, {Mathf.Abs(angle):0} deg {(angle >= 0f ? "right" : "left")} of your view, "
+                + $"{(post.Covered ? "with" : "without")} cover ({C2Nav.DescribeCover(post.Spot, post.Watch)}); {walk}";
         }
 
         /// <summary>Adds a post when one was found.</summary>

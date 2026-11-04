@@ -2,7 +2,8 @@
 // cover tests the guard planner uses.
 //
 // Called by McsBaseLayer.UpdateLeadNearMoveTarget and McsGuardLayer (follow spots), EngageTactics
-// (flank points) and GuardPlanner (reach and cover tests). Upstream MCS sampled "the nearest
+// (flank points) and GuardPlanner (reach and cover tests); DescribeCover serves only the diagnostic
+// log (GuardPlanner.DescribePost, OpenGroundWatch). Upstream MCS sampled "the nearest
 // navmesh point" around the player, which can lie behind a wall, in the next room or on another
 // floor, and the bot then pathed there through doors and detours. Here a follow spot, and an
 // indoor guard post, counts only if it is "in the player's space": within 1.5 m of the player's
@@ -218,6 +219,55 @@ namespace MiyakoCarryService.Client.C2Sain
             }
             covered = lowCover || leanAround || bush;
             return score;
+        }
+
+        /// <summary>
+        /// For the diagnostic log only: what ScoreCover's tests find at a spot toward a direction, naming
+        /// the object each ray hit, e.g. "waist-high Rock_05 at 1.1 m, lean-around Pine_03 at 0.9 m, bush",
+        /// or "nothing". It repeats ScoreCover's rays instead of sharing them, so ScoreCover stays exactly
+        /// what scored the posts; keep the two in step if either changes.
+        /// </summary>
+        /// <param name="p">The spot (on the navmesh).</param>
+        /// <param name="toward">The direction the bot watches from it.</param>
+        internal static string DescribeCover(Vector3 p, Vector3 toward)
+        {
+            if (toward.sqrMagnitude < 0.0001f)
+            {
+                return "no watch direction";
+            }
+            var hard = LayersMaskController.HighPolyWithTerrainMask;
+            var foliage = LayersMaskController.Foliage;
+            var text = "";
+            void Add(string part) => text = text.Length == 0 ? part : text + ", " + part;
+
+            if (Physics.Raycast(p + Vector3.up * 0.7f, toward, out var low, 1.5f, hard))
+            {
+                Add($"waist-high {NameOf(low.collider)} at {low.distance:0.0} m");
+            }
+            var eye = p + Vector3.up * 1.6f;
+            if (Physics.Raycast(eye, toward, out var high, 1.5f, hard))
+            {
+                var side = Vector3.Cross(Vector3.up, toward).normalized * 0.6f;
+                var lean = !Physics.Raycast(eye + side, toward, 1.5f, hard) || !Physics.Raycast(eye - side, toward, 1.5f, hard);
+                Add($"{(lean ? "lean-around" : "view blocked by")} {NameOf(high.collider)} at {high.distance:0.0} m");
+            }
+            if (Physics.CheckSphere(p + Vector3.up * 0.9f, 0.8f, foliage, QueryTriggerInteraction.Collide)
+                || Physics.Raycast(p + Vector3.up * 1.0f, toward, 2f, foliage, QueryTriggerInteraction.Collide))
+            {
+                Add("bush");
+            }
+            return text.Length == 0 ? "nothing" : text;
+        }
+
+        /// <summary>A collider's object name for the log, cut to 32 characters.</summary>
+        private static string NameOf(Collider collider)
+        {
+            if (collider == null)
+            {
+                return "?";
+            }
+            var name = collider.name;
+            return name.Length > 32 ? name.Substring(0, 32) : name;
         }
 
         /// <summary>Length of a path that starts at <paramref name="from"/> and runs through the corners.</summary>

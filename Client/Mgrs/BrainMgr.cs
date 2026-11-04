@@ -45,6 +45,7 @@ namespace MiyakoCarryService.Client.Mgrs
             base.OnRaidEnded();
             LayerUtils.OnRaidEnded();
             MiyakoCarryService.Client.C2Sain.TeamModes.Clear();
+            MiyakoCarryService.Client.C2Sain.OpenGroundWatch.Clear(); // Fork: per-bot diagnostics state
         }
 
         private async Task Reload()

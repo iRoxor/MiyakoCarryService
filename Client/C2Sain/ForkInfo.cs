@@ -1,8 +1,9 @@
 // ForkInfo.cs -- identity of the C2/SAIN fork build.
 //
 // Read by MiyakoCarryServiceClient.Start (startup log line), ForkDebug (the
-// in-raid debug overlay) and, since v4, MenuTaskBarAwakePatch (MCS's debug dump),
-// so a log, screenshot or dump names the build it came from. The fork's only
+// in-raid debug overlay), since v4 MenuTaskBarAwakePatch (MCS's debug dump) and,
+// since v7, ForkLog (the tag on every diagnostic line, with the raid clock), so a
+// log, screenshot or dump names the build it came from. The fork's only
 // records are the BepInEx log and that dump, a one-off report per session that
 // nobody pools across builds, so one behaviour counter is enough; there is no
 // schema version.
@@ -122,10 +123,54 @@ namespace MiyakoCarryService.Client.C2Sain
         ///    in a minute with squadmates alive, or a Defend bot in the player's line of fire, sends
         ///    Defend Me back. Any command missing from the menus, or behaving differently from v5,
         ///    means the menu change broke something.
+        ///  7 (2026-11-05) Test build 7, from the user's Customs raid with v6 (logs in
+        ///    miyako-carry-service/evidence/2026-11-05-build-6-raid, Raid Review export in
+        ///    user-added-files/analyzed). The user flagged 04:14-04:20, a carry bot outside the room
+        ///    they healed in while a Reshala guard walked past it and up the stairs; they had been
+        ///    seeing views "glued to a wall".
+        ///    Measured in the export: the bot reached its spot at 04:10.8, then kept head and body at
+        ///    198.0 deg, its last walking direction, until 04:22.8, while the guard passed 155-180
+        ///    deg off that view at 12-14 m. The same raid's log has a 24 s C2Sain:ToGuardSpot stand
+        ///    1.3 m from a post, and v4's had one 2.0 m short. Across the whole export, read with
+        ///    this build's frozen-view rule (tools/raid_review_summary.py): 39 runs of 8 s or more,
+        ///    570 s; 492 s of them while a fork layer drove, 25% of the carry bots' 32.5 minutes not
+        ///    under SAIN, longest 35 s. By the log's squad mode: 350 s in Guard, 72 s in Combat, 38 s
+        ///    in Defend, 33 s in C2.
+        ///    Traced: the game ends a walk at its own reach distance (BotGoToPointData.IsCome), but
+        ///    McsGuardLayer counted a bot as arrived only within 1.25 m. A bot stopped short stayed
+        ///    in GuardMoveLogic, which only looks where the bot is moving.
+        ///    Changed:
+        ///    - a bot that stalls (no 0.3 m of progress in 2 s) within 3 m of its spot counts as
+        ///      arrived (Core/ArrivalWatch.cs);
+        ///    - a stalled walk looks around instead of staring ahead;
+        ///    - the watch scan tries five offsets per look and takes the most open sight line, and
+        ///      checks behind every fourth look (Core/LookScan.cs).
+        ///    Diagnostics, at the user's request: every fork log line carries the raid clock, started
+        ///    where Raid Review starts its own (ForkLog). The diagnostic log adds each carry bot's
+        ///    brain-layer changes with SAIN's decision (BrainWatch), frozen views of 8 s or more with
+        ///    what the guard logics were turning the head toward (FrozenViewWatch,
+        ///    BotForkState.LookSource; also a "Frozen View (s)" dump line), stall arrivals and
+        ///    deaths. SAIN's own decision logging exists only in its debug builds, and BigBrain logs
+        ///    no layer changes.
+        ///    Pooling: the dump's other counts keep their meaning. Log lines now carry a clock and the
+        ///    summarizers read both forms. Open-ground and frozen-view times compare across builds,
+        ///    but v7's arrival rule ends ToGuardSpot stands sooner, so ToGuardSpot open-ground time is
+        ///    not comparable with v6.
+        ///    Falsifiers, from raids with the diagnostic log on and their Raid Review exports:
+        ///    - a frozen view of 10 s or more in C2Sain:ToGuardSpot, ToDefendSpot or Return within 3 m
+        ///      of the spot, the head "where it walks", sends the arrival rule back;
+        ///    - a frozen view while "scanning" longer than 13 s (three looks of at most 4 s, then a
+        ///      check behind), or more than two of 10 s or more in a raid, sends the scan back. Runs
+        ///      facing the squad's threat or a contact report are by design and do not count;
+        ///    - in the export, frozen views while McsGuardLayer drove (the runs raid_review_summary.py
+        ///      labels "fork: McsGuardLayer") above 8% of the carry bots' McsGuardLayer time (the log
+        ///      summary's brain timeline) mean the look fixes fell short of v6's quarter;
+        ///    - bots leaving their posts early (an arrival line far more than 1.25 m from the spot while
+        ///      the path was clear) sends the 3 m radius back.
         /// </summary>
-        public const int ForkVersion = 6;
+        public const int ForkVersion = 7;
 
         /// <summary>Short label used in logs and the overlay.</summary>
-        public const string Label = "C2/SAIN fork v6";
+        public const string Label = "C2/SAIN fork v7";
     }
 }

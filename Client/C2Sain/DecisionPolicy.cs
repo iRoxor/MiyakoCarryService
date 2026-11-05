@@ -127,7 +127,7 @@ namespace MiyakoCarryService.Client.C2Sain
                         SainBridge.StopSearch(bot, enemy);
                         if (ForkConfig.DebugLog.Value)
                         {
-                            McsLogger.LogInfo($"[{ForkInfo.Label}] {botOwner.Profile?.Nickname}: chase cut at {distance:0} m from the player");
+                            McsLogger.LogInfo($"[{ForkLog.Tag}] {botOwner.Profile?.Nickname}: chase cut at {distance:0} m from the player");
                         }
                     }
                 }

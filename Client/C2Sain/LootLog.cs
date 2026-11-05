@@ -63,7 +63,7 @@ namespace MiyakoCarryService.Client.C2Sain
                 var player = data.Player;
                 var at = target.RootTransform;
                 var distance = player != null && at != null ? Vector3.Distance(player.Position, at.position).ToString("0") : "?";
-                McsLogger.LogInfo($"[{ForkInfo.Label}] {player?.Profile?.Nickname}: loot target: {ItemName(target)} ({why}) {Where(target)}, {distance} m away");
+                McsLogger.LogInfo($"[{ForkLog.Tag}] {player?.Profile?.Nickname}: loot target: {ItemName(target)} ({why}) {Where(target)}, {distance} m away");
             }
             catch (Exception e)
             {
@@ -82,8 +82,8 @@ namespace MiyakoCarryService.Client.C2Sain
             {
                 var nickname = data.Player?.Profile?.Nickname;
                 McsLogger.LogInfo(taken
-                    ? $"[{ForkInfo.Label}] {nickname}: loot taken: {ItemName(target)}"
-                    : $"[{ForkInfo.Label}] {nickname}: loot not taken: {ItemName(target)} (no room)");
+                    ? $"[{ForkLog.Tag}] {nickname}: loot taken: {ItemName(target)}"
+                    : $"[{ForkLog.Tag}] {nickname}: loot not taken: {ItemName(target)} (no room)");
             }
             catch (Exception e)
             {
@@ -123,7 +123,7 @@ namespace MiyakoCarryService.Client.C2Sain
             if (Time.time >= _nextErrorLog)
             {
                 _nextErrorLog = Time.time + ERROR_LOG_INTERVAL;
-                McsLogger.LogError($"[{ForkInfo.Label}] loot log failed: {e}");
+                McsLogger.LogError($"[{ForkLog.Tag}] loot log failed: {e}");
             }
         }
     }

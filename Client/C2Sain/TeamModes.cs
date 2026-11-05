@@ -60,7 +60,11 @@ namespace MiyakoCarryService.Client.C2Sain
         /// </summary>
         private const float DEFEND_REPLAN_MOVE = 2f;
 
-        /// <summary>A bot this close (m) to its Defend spot counts as there; the same as McsGuardLayer's AT_SPOT.</summary>
+        /// <summary>
+        /// A bot this close (m) to its Defend spot counts as there when its fork state is missing.
+        /// Otherwise the Guard layer's arrival verdict is used (within 1.25 m, or stalled within 3 m;
+        /// Core/ArrivalWatch.cs), so a bot stopped just short of its spot may still shift.
+        /// </summary>
         private const float DEFEND_AT_SPOT = 1.25f;
 
         private sealed class Entry
@@ -200,7 +204,7 @@ namespace MiyakoCarryService.Client.C2Sain
             entry.DefendPlan = null;
             if (startedNow && ForkConfig.DebugLog?.Value == true)
             {
-                McsLogger.LogInfo($"[{ForkInfo.Label}] squad of {lead.McsLeadPlayer?.Profile?.Nickname}: Defend Me ordered");
+                McsLogger.LogInfo($"[{ForkLog.Tag}] squad of {lead.McsLeadPlayer?.Profile?.Nickname}: Defend Me ordered");
             }
         }
 
@@ -217,7 +221,7 @@ namespace MiyakoCarryService.Client.C2Sain
             entry.DefendPlan = null;
             if (ForkConfig.DebugLog?.Value == true)
             {
-                McsLogger.LogInfo($"[{ForkInfo.Label}] squad of {lead.McsLeadPlayer?.Profile?.Nickname}: Defend Me cancelled");
+                McsLogger.LogInfo($"[{ForkLog.Tag}] squad of {lead.McsLeadPlayer?.Profile?.Nickname}: Defend Me cancelled");
             }
         }
 
@@ -272,7 +276,7 @@ namespace MiyakoCarryService.Client.C2Sain
                 return null;
             }
 
-            var atSpot = Vector3.Distance(bot.Position, post.Spot) <= DEFEND_AT_SPOT;
+            var atSpot = fork != null ? fork.Arrival.Arrived : Vector3.Distance(bot.Position, post.Spot) <= DEFEND_AT_SPOT;
             if (fork != null && fork.DefendShift.Tick(Time.time, atSpot, _members.Count, _shiftSettings))
             {
                 _otherPosts.Clear();
@@ -291,7 +295,7 @@ namespace MiyakoCarryService.Client.C2Sain
                     post = shifted;
                     if (ForkConfig.DebugLog?.Value == true)
                     {
-                        McsLogger.LogInfo($"[{ForkInfo.Label}] defend shift for {bot.Profile?.Nickname}: "
+                        McsLogger.LogInfo($"[{ForkLog.Tag}] defend shift for {bot.Profile?.Nickname}: "
                             + GuardPlanner.DescribePost(player.Position, player.LookDirection, bot.Position, shifted));
                     }
                 }
@@ -427,12 +431,12 @@ namespace MiyakoCarryService.Client.C2Sain
             {
                 return;
             }
-            McsLogger.LogInfo($"[{ForkInfo.Label}] {what} for {player.Profile?.Nickname}: {(indoors ? "indoors" : "outdoors")}, "
+            McsLogger.LogInfo($"[{ForkLog.Tag}] {what} for {player.Profile?.Nickname}: {(indoors ? "indoors" : "outdoors")}, "
                 + $"{posts.Count} post(s) for {_members.Count} bot(s){(threat.HasValue ? ", facing a contact report" : "")}");
             foreach (var member in _members)
             {
                 state.Posts.TryGetValue(member.ProfileId, out var post);
-                McsLogger.LogInfo($"[{ForkInfo.Label}]   {member.Profile?.Nickname}: "
+                McsLogger.LogInfo($"[{ForkLog.Tag}]   {member.Profile?.Nickname}: "
                     + GuardPlanner.DescribePost(player.Position, player.LookDirection, member.Position, post));
             }
         }
@@ -532,7 +536,7 @@ namespace MiyakoCarryService.Client.C2Sain
             var after = entry.Machine.Tick(now, new V3(pos.x, pos.y, pos.z), engaged, _settings);
             if (before != after && ForkConfig.DebugLog != null && ForkConfig.DebugLog.Value)
             {
-                McsLogger.LogInfo($"[{ForkInfo.Label}] squad of {player.Profile?.Nickname}: {before} -> {after}");
+                McsLogger.LogInfo($"[{ForkLog.Tag}] squad of {player.Profile?.Nickname}: {before} -> {after}");
             }
         }
 

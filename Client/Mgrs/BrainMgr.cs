@@ -46,6 +46,10 @@ namespace MiyakoCarryService.Client.Mgrs
             LayerUtils.OnRaidEnded();
             MiyakoCarryService.Client.C2Sain.TeamModes.Clear();
             MiyakoCarryService.Client.C2Sain.OpenGroundWatch.Clear(); // Fork: per-bot diagnostics state
+            // Fork: the v7 diagnostics' per-bot state, and the raid clock on the fork's log lines.
+            MiyakoCarryService.Client.C2Sain.FrozenViewWatch.Clear();
+            MiyakoCarryService.Client.C2Sain.BrainWatch.Clear();
+            MiyakoCarryService.Client.C2Sain.ForkLog.StopRaidClock();
         }
 
         private async Task Reload()

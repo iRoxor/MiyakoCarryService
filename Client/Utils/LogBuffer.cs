@@ -21,6 +21,8 @@ namespace MiyakoCarryService.Client.Utils
             public ConcurrentDictionary<string, int> UsedReasons = new();
             /// <summary>Fork: samples (about one a second) of a carry bot standing still in the open, by the reason its brain was running. Written by C2Sain/OpenGroundWatch.</summary>
             public ConcurrentDictionary<string, int> OpenGroundReasons = new();
+            /// <summary>Fork: bot-seconds of a carry bot's view frozen for 8 s or more, by the reason its brain was running. Written by C2Sain/FrozenViewWatch.</summary>
+            public ConcurrentDictionary<string, int> FrozenViewReasons = new();
         }
 
         private readonly ConcurrentDictionary<string, LogEntry> _entries = new();
@@ -132,6 +134,17 @@ namespace MiyakoCarryService.Client.Utils
             }
 
             _currentRaidRecord.OpenGroundReasons.AddOrUpdate(reason, 1, (_, times) => times + 1);
+        }
+
+        /// <summary>Fork: adds <paramref name="seconds"/> bot-seconds of a frozen carry-bot view under <paramref name="reason"/> (C2Sain/FrozenViewWatch).</summary>
+        public void AddFrozenViewReason(string reason, int seconds)
+        {
+            if (_currentRaidRecord == null || reason == null)
+            {
+                return;
+            }
+
+            _currentRaidRecord.FrozenViewReasons.AddOrUpdate(reason, seconds, (_, times) => times + seconds);
         }
 
         public List<RaidUsedInfo> GetRaidUsedInfos()

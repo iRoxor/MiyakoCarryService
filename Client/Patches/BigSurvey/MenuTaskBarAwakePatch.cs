@@ -181,7 +181,9 @@ public sealed class MenuTaskBarAwakePatch : ModulePatch
                 .Append('\n').Append("  - Used Layer: ").Append(FormatRaidUsedEntries(raidUsedInfo.UsedLayers))
                 .Append('\n').Append("  - Used Reason: ").Append(FormatRaidUsedEntries(raidUsedInfo.UsedReasons))
                 // Fork: seconds carry bots stood still with nothing solid within 1.5 m and no bush within 1 m, by reason (C2Sain/OpenGroundWatch).
-                .Append('\n').Append("  - Still In The Open (s): ").Append(raidUsedInfo.OpenGroundReasons.IsEmpty ? "none" : FormatRaidUsedEntries(raidUsedInfo.OpenGroundReasons));
+                .Append('\n').Append("  - Still In The Open (s): ").Append(raidUsedInfo.OpenGroundReasons.IsEmpty ? "none" : FormatRaidUsedEntries(raidUsedInfo.OpenGroundReasons))
+                // Fork: seconds carry bots' view stayed within 5 degrees for 8 s or more while standing, by reason (C2Sain/FrozenViewWatch).
+                .Append('\n').Append("  - Frozen View (s): ").Append(raidUsedInfo.FrozenViewReasons.IsEmpty ? "none" : FormatRaidUsedEntries(raidUsedInfo.FrozenViewReasons));
         }
 
         return sectionsBuilder.ToString();

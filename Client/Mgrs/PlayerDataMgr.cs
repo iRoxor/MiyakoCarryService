@@ -44,6 +44,7 @@ namespace MiyakoCarryService.Client.Mgrs
             base.OnRaidStarted();
             StartCoroutine(ReloadDataLoop(1f, LoadItemData<PlayerData>));
             StartCoroutine(RecordAgentInfo(1f));
+            StartCoroutine(RecordBrainTimeline(0.25f)); // Fork: the diagnostic log's brain timeline (C2Sain/BrainWatch)
             StartCoroutine(UpdateItemData(1f));
             StartCoroutine(RefreshMcsBotPlayersInterestingLoop(10f));
             StartCoroutine(CheckMcsLeadPlayerSeenEnemiesLoop(1f));
@@ -92,8 +93,10 @@ namespace MiyakoCarryService.Client.Mgrs
                             MiyakoCarryServicePlugin.LogBuffer.AddUsedBrain(baseBrain.ShortName());
                             MiyakoCarryServicePlugin.LogBuffer.AddUsedLayer(brain.ActiveLayerName());
                             MiyakoCarryServicePlugin.LogBuffer.AddUsedReason(brain.GetActiveNodeReason());
-                            // Fork: counts (and with the diagnostic log, logs) carry bots standing still in the open.
+                            // Fork: counts (and with the diagnostic log, logs) carry bots standing still in the open,
+                            // and carry bots whose view has frozen.
                             C2Sain.OpenGroundWatch.Sample(mcsBotPlayerData, brain.ActiveLayerName(), brain.GetActiveNodeReason());
+                            C2Sain.FrozenViewWatch.Sample(mcsBotPlayerData, brain.ActiveLayerName(), brain.GetActiveNodeReason());
 
                             if (!LayerUtils.IsMcsBotPlayerInjected(mcsBotPlayerData.BotOwner))
                             {
@@ -104,6 +107,39 @@ namespace MiyakoCarryService.Client.Mgrs
                     catch
                     {
 
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Fork: every <paramref name="time"/> seconds, hands each carry bot's active brain layer and
+        /// reason to C2Sain/BrainWatch, which logs the changes (and deaths) when "Debug: diagnostic log"
+        /// is on. Each bot is read inside its own try, so one bot's fault cannot end the loop.
+        /// </summary>
+        private IEnumerator RecordBrainTimeline(float time)
+        {
+            var waitTime = new WaitForSeconds(time);
+            while (true)
+            {
+                yield return waitTime;
+                if (!Gameloop.IsVaildGameWorld || C2Sain.ForkConfig.DebugLog?.Value != true)
+                {
+                    continue;
+                }
+                foreach (var mcsBotPlayerData in GetMcsBotPlayerDatas())
+                {
+                    try
+                    {
+                        var brain = mcsBotPlayerData.BotOwner?.Brain;
+                        var alive = mcsBotPlayerData.Player?.HealthController?.IsAlive == true;
+                        var layer = alive && brain?.BaseBrain != null ? brain.ActiveLayerName() : "-";
+                        var reason = alive && brain?.BaseBrain != null ? brain.GetActiveNodeReason() : "-";
+                        C2Sain.BrainWatch.Sample(mcsBotPlayerData, layer, reason);
+                    }
+                    catch
+                    {
+                        // A bot being torn down mid-read; the next sample sees its new state.
                     }
                 }
             }

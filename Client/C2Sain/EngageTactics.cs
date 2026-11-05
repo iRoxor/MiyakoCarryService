@@ -310,7 +310,7 @@ namespace MiyakoCarryService.Client.C2Sain
             fork.BasePersonality = ChooseBase(bot, fork.SainRolledPersonality, allowed);
             if (fork.BasePersonality != fork.SainRolledPersonality && ForkConfig.DebugLog?.Value == true)
             {
-                McsLogger.LogInfo($"[{ForkInfo.Label}] {bot.BotOwner?.Profile?.Nickname}: SAIN rolled {fork.SainRolledPersonality}, not allowed; using {fork.BasePersonality}");
+                McsLogger.LogInfo($"[{ForkLog.Tag}] {bot.BotOwner?.Profile?.Nickname}: SAIN rolled {fork.SainRolledPersonality}, not allowed; using {fork.BasePersonality}");
             }
         }
 
@@ -460,7 +460,7 @@ namespace MiyakoCarryService.Client.C2Sain
         {
             if (ForkConfig.DebugLog?.Value == true)
             {
-                McsLogger.LogInfo($"[{ForkInfo.Label}] {botOwner.Profile?.Nickname}: {text}");
+                McsLogger.LogInfo($"[{ForkLog.Tag}] {botOwner.Profile?.Nickname}: {text}");
             }
         }
 

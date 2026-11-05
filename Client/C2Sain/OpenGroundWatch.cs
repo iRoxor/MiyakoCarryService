@@ -99,7 +99,7 @@ namespace MiyakoCarryService.Client.C2Sain
                         OpenGroundEnd.Covered => "reached cover",
                         _ => "stopped being sampled",
                     };
-                    McsLogger.LogInfo($"[{ForkInfo.Label}] open ground: {player.Profile?.Nickname} {how} after {tracker.RunSeconds:0} s still in the open (now {layer}, {reason})");
+                    McsLogger.LogInfo($"[{ForkLog.Tag}] open ground: {player.Profile?.Nickname} {how} after {tracker.RunSeconds:0} s still in the open (now {layer}, {reason})");
                 }
             }
             catch (Exception e)
@@ -107,7 +107,7 @@ namespace MiyakoCarryService.Client.C2Sain
                 if (Time.time >= _nextErrorLog)
                 {
                     _nextErrorLog = Time.time + ERROR_LOG_INTERVAL;
-                    McsLogger.LogError($"[{ForkInfo.Label}] open-ground watch failed: {e}");
+                    McsLogger.LogError($"[{ForkLog.Tag}] open-ground watch failed: {e}");
                 }
             }
         }
@@ -136,6 +136,18 @@ namespace MiyakoCarryService.Client.C2Sain
         /// <summary>The log line for a bot that has just reached 5 s still in the open.</summary>
         private static string DescribeStart(McsBotPlayerData data, Player player, float seconds, string layer, string reason)
         {
+            return $"[{ForkLog.Tag}] open ground: {player.Profile?.Nickname} has stood still in the open for {seconds:0} s; "
+                + $"{DescribeContext(data, player, layer, reason)}; nothing solid within {OPEN_SOLID_RADIUS:0.0} m, no bush within {OPEN_BUSH_RADIUS:0.0} m";
+        }
+
+        /// <summary>
+        /// What a carry bot is doing, for diagnostic lines (here and FrozenViewWatch): "squad Guard, C2
+        /// stepped aside (guarding); McsGuardLayer, C2Sain:Watch; post detail 6 m from you, planned
+        /// without cover (nothing), bot 0.7 m from it; standing, 6 m from you". Casts the cover rays
+        /// again when the bot has a guard post.
+        /// </summary>
+        internal static string DescribeContext(McsBotPlayerData data, Player player, string layer, string reason)
+        {
             var fork = data.Fork;
             var lead = data.LeadPlayer;
             var team = data.McsAILeadPlayer != null ? TeamModes.Get(data.McsAILeadPlayer) : null;
@@ -154,9 +166,7 @@ namespace MiyakoCarryService.Client.C2Sain
                 : "standing";
             var toPlayer = lead != null ? $"{Vector3.Distance(position, lead.Position):0} m from you" : "player unknown";
             var squad = team != null ? team.Mode.ToString() : "-";
-            return $"[{ForkInfo.Label}] open ground: {player.Profile?.Nickname} has stood still in the open for {seconds:0} s; "
-                + $"squad {squad}, C2 {(fork.C2Active ? "in charge" : "stepped aside")} ({fork.C2Reason}); {layer}, {reason}; "
-                + $"{post}; {pose}, {toPlayer}; nothing solid within {OPEN_SOLID_RADIUS:0.0} m, no bush within {OPEN_BUSH_RADIUS:0.0} m";
+            return $"squad {squad}, C2 {(fork.C2Active ? "in charge" : "stepped aside")} ({fork.C2Reason}); {layer}, {reason}; {post}; {pose}, {toPlayer}";
         }
     }
 }

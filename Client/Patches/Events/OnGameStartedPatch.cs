@@ -30,6 +30,8 @@ namespace MiyakoCarryService.Client.Patches.Events
         [PatchPostfix]
         public static void Postfix()
         {
+            // Fork: the raid clock on the fork's log lines, started where Raid Review starts its own (C2Sain/ForkLog.cs).
+            C2Sain.ForkLog.StartRaidClock();
             GameLoop.Instance.IsGameStarted = true;
             GameLoop.Instance.CheckVaildGameWorld();
 

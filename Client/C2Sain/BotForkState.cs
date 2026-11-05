@@ -3,10 +3,11 @@
 // One instance per carry bot, created with and owned by McsBotPlayerData (its
 // Fork property). Written by C2Gate (C2 layer gate), DecisionPolicy and
 // EngageTactics (SAIN decision prefix), McsGuardLayer, TeamModes (the Defend Me
-// shift timer), the fork's commands (ForkCommands, Break off) and
-// EscortToPointByWayLogic; read by ForkDebug for the overlay, by GuardMoveLogic
-// and by BotWeaponSelectorPatch. Holds no Unity objects that outlive a raid.
-// Reads and writes no files.
+// shift timer), the guard logics (walk progress, look scan), the fork's commands
+// (ForkCommands, Break off) and EscortToPointByWayLogic; read by ForkDebug for the
+// overlay, by the diagnostics (OpenGroundWatch, BrainWatch, FrozenViewWatch), by
+// GuardMoveLogic and by BotWeaponSelectorPatch. Holds no Unity objects that outlive a raid. Reads and
+// writes no files.
 
 using MiyakoCarryService.Client.C2Sain.Core;
 using SAIN.Preset.Shared.Models.Preset.Personalities;
@@ -32,11 +33,47 @@ namespace MiyakoCarryService.Client.C2Sain
         /// <summary>When the bot shifts to a new Defend Me spot (TeamModes.GetDefendPost).</summary>
         public readonly DefendShuffle DefendShift = new(() => Random.value);
 
+        /// <summary>Whether the bot has reached its guard or Defend spot, counting a stall close to it (McsGuardLayer; TeamModes reads Arrived).</summary>
+        public readonly ArrivalWatch Arrival = new();
+
+        /// <summary>Whether the current walk is making progress toward GuardMoveLogic's target (GuardMoveLogic).</summary>
+        public readonly ArrivalWatch MoveProgress = new();
+
+        /// <summary>Where the bot looks while it holds still with no enemy to watch (GuardWatchLogic, and GuardMoveLogic when stalled).</summary>
+        public readonly LookScan Look = new(() => Random.value);
+
         /// <summary>
         /// True while the Guard layer wants the bot to keep watching GuardOutward as it walks (a short
         /// Defend Me shift) instead of looking where it is going; read by GuardMoveLogic.
         /// </summary>
         public bool LookOutwardWhileMoving;
+
+        /// <summary>
+        /// What turned the bot's head on the guard logics' last frame ("scanning", "at the squad's
+        /// threat", ...) and when (Time.time). Written by GuardMoveLogic and GuardWatchLogic every
+        /// frame they run; read through DescribeLook by FrozenViewWatch. Diagnostics only.
+        /// </summary>
+        public string LookSource = "";
+        public float LookSourceTime = -999f;
+
+        /// <summary>
+        /// LookSource for a diagnostic line, or "not steered by the guard layer" when the guard logics
+        /// have not run in the last second (another layer, such as SAIN's, is turning the head).
+        /// </summary>
+        /// <param name="now">Time.time.</param>
+        public string DescribeLook(float now)
+        {
+            return now - LookSourceTime <= 1f && LookSource.Length > 0 ? LookSource : "not steered by the guard layer";
+        }
+
+        /// <summary>Records what the guard logics turned the head toward this frame; see LookSource.</summary>
+        /// <param name="source">A short phrase, e.g. "scanning".</param>
+        /// <param name="now">Time.time.</param>
+        public void SetLook(string source, float now)
+        {
+            LookSource = source;
+            LookSourceTime = now;
+        }
 
         /// <summary>True when the C2 layer won the last brain tick (C2Gate).</summary>
         public bool C2Active;

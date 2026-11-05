@@ -15,7 +15,8 @@
 //   - guard: go to this bot's post in the squad's guard plan (TeamModes.GetGuardPost,
 //     planned by GuardPlanner: a protection detail around the player outdoors,
 //     the approaches indoors, facing a contact report when there is one), then
-//     watch from it;
+//     watch from it. A bot counts as at its post or spot within 1.25 m, or once it
+//     stalls within 3 m of it (Core/ArrivalWatch.cs, since fork v7);
 //   - with no post or spot, fall back to a follow spot near the player.
 // Writes the bot's fork state (guard spot, watch direction, cover flag, post
 // kind, hurry and look-outward flags). Reads and writes no files.
@@ -27,6 +28,7 @@ using EFT;
 using MiyakoCarryService.Client.Api;
 using MiyakoCarryService.Client.Bots.Brain.Layers;
 using MiyakoCarryService.Client.Bots.Brain.Logics;
+using MiyakoCarryService.Client.C2Sain.Core;
 using MiyakoCarryService.Client.C2Sain.Logics;
 using MiyakoCarryService.Client.Extensions;
 using MiyakoCarryService.Client.Mgrs;
@@ -41,8 +43,8 @@ namespace MiyakoCarryService.Client.C2Sain.Layers
         /// <summary>Re-pick a fallback follow spot once the player has moved this far (m) from where it was picked.</summary>
         private const float RESPOT_PLAYER_MOVE = 4f;
 
-        /// <summary>A bot this close (m) to its spot counts as there.</summary>
-        private const float AT_SPOT = 1.25f;
+        /// <summary>When a bot counts as at its spot: within 1.25 m, or stalled within 3 m (Core/ArrivalWatch.cs).</summary>
+        private static readonly ArrivalSettings _arrival = new();
 
         /// <summary>Seconds between re-evaluations while moving or watching.</summary>
         private const float EVAL_INTERVAL = 0.5f;
@@ -125,7 +127,7 @@ namespace MiyakoCarryService.Client.C2Sain.Layers
 
                 var toSpot = fork.HasGuardSpot ? Vector3.Distance(BotOwner.Position, fork.GuardSpot) : 0f;
                 fork.LookOutwardWhileMoving = defending && post != null && toSpot <= SHIFT_LOOK_DISTANCE;
-                if (fork.HasGuardSpot && toSpot > AT_SPOT)
+                if (fork.HasGuardSpot && !Arrived(fork, data))
                 {
                     _currentMoveTarget = fork.GuardSpot;
                     ApplyMovePoint();
@@ -149,6 +151,24 @@ namespace MiyakoCarryService.Client.C2Sain.Layers
                 McsLogger.LogError(e);
                 return new Action(typeof(HoldPositionLogic), "C2Sain:GuardException");
             }
+        }
+
+        /// <summary>
+        /// Whether the bot is at its guard or Defend spot: within 1.25 m, or stalled within 3 m of it
+        /// (Core/ArrivalWatch.cs). Fork v3-v6 required the 1.25 m, so a bot that physically stopped
+        /// short stayed in the walk step for good, looking where it last walked. Logs, with "Debug:
+        /// diagnostic log" on, the first time a spot is reached by stalling.
+        /// </summary>
+        private bool Arrived(BotForkState fork, MiyakoCarryService.Client.Datas.McsBotPlayerData data)
+        {
+            var wasByStall = fork.Arrival.ArrivedByStall;
+            var p = BotOwner.Position;
+            var arrived = fork.Arrival.Update(Time.time, new V3(p.x, p.y, p.z), new V3(fork.GuardSpot.x, fork.GuardSpot.y, fork.GuardSpot.z), _arrival);
+            if (fork.Arrival.ArrivedByStall && !wasByStall && ForkConfig.DebugLog?.Value == true)
+            {
+                McsLogger.LogInfo($"[{ForkLog.Tag}] arrival: {data.Player?.Profile?.Nickname} stalled {fork.Arrival.Distance:0.0} m short of its {fork.GuardPostKind} spot; watching from there");
+            }
+            return arrived;
         }
 
         /// <summary>

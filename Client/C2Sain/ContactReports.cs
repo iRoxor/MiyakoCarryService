@@ -83,7 +83,7 @@ namespace MiyakoCarryService.Client.C2Sain
                 });
                 if (ForkConfig.DebugLog?.Value == true)
                 {
-                    McsLogger.LogInfo($"[{ForkInfo.Label}] contact report at {_reportMark}: {(_reportEnemy != null ? _reportEnemy.Profile?.Nickname : "no enemy near the crosshair")}");
+                    McsLogger.LogInfo($"[{ForkLog.Tag}] contact report at {_reportMark}: {(_reportEnemy != null ? _reportEnemy.Profile?.Nickname : "no enemy near the crosshair")}");
                 }
             }
 

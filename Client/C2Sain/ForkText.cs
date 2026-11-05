@@ -72,7 +72,7 @@ namespace MiyakoCarryService.Client.C2Sain
             ["McsFork/McsFastDoors Key"] = "Movement: MCS fast doors",
             ["McsFork/McsFastDoors Description"] = "Upstream MCS's own door handling, which opens doors instantly and ignores the game's rule on which doors may be opened. Default off: the game's and SAIN's door handling are used instead.",
             ["McsFork/DebugLog Key"] = "Debug: diagnostic log",
-            ["McsFork/DebugLog Description"] = "Write what the carry bots decide to BepInEx\\LogOutput.log: squad mode changes, cut chases, contact reports, Engage orders, personality re-rolls, every guard plan with each bot's post and its cover, any bot that has stood still in the open for 5 s (with what it was doing), and each item a bot goes to loot by itself (why, and whether it lies on a body, in a container or on the ground) and whether it took it. Turn it on when you want to report a problem. Default off.",
+            ["McsFork/DebugLog Description"] = "Write what the carry bots decide to BepInEx\\LogOutput.log, each line stamped with the raid clock (minutes:seconds since the raid started, the same clock Raid Review uses): every change of each bot's brain layer and SAIN's decision, squad mode changes, cut chases, contact reports, Engage orders, personality re-rolls, every guard and Defend plan with each bot's spot and its cover, bots stopping short of their spot, any bot that has stood still in the open for 5 s or kept looking the same way for 8 s, deaths, and each item a bot goes to loot by itself. Several hundred lines a raid. Turn it on when you want to report a problem. Default off.",
 
             // Commands.
             ["McsFork/BreakOff Name"] = "Break off from combat",

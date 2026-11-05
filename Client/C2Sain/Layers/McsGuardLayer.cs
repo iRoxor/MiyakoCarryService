@@ -9,12 +9,16 @@
 //
 // Behaviour, in order:
 //   - flank leg: go to the leg's point, sprinting while far from it;
+//   - Defend Me (the squad has a Defend zone, in combat or not): go to this bot's
+//     Defend spot 3-5 m from the player (TeamModes.GetDefendPost), watching outward
+//     on short shifts between spots, then watch from it;
 //   - guard: go to this bot's post in the squad's guard plan (TeamModes.GetGuardPost,
 //     planned by GuardPlanner: a protection detail around the player outdoors,
 //     the approaches indoors, facing a contact report when there is one), then
-//     watch from it; with no post, fall back to a follow spot near the player.
+//     watch from it;
+//   - with no post or spot, fall back to a follow spot near the player.
 // Writes the bot's fork state (guard spot, watch direction, cover flag, post
-// kind, hurry flag). Reads and writes no files.
+// kind, hurry and look-outward flags). Reads and writes no files.
 
 using System;
 using System.Collections.Generic;
@@ -42,6 +46,12 @@ namespace MiyakoCarryService.Client.C2Sain.Layers
 
         /// <summary>Seconds between re-evaluations while moving or watching.</summary>
         private const float EVAL_INTERVAL = 0.5f;
+
+        /// <summary>
+        /// Under Defend Me, a bot this close (m) to its spot keeps watching outward as it walks there (a
+        /// shift); farther away (coming in from elsewhere) it looks where it is going.
+        /// </summary>
+        private const float SHIFT_LOOK_DISTANCE = 8f;
 
         private float _nextEval;
 
@@ -97,7 +107,8 @@ namespace MiyakoCarryService.Client.C2Sain.Layers
                 var distanceToLead = Vector3.Distance(BotOwner.Position, leadPos);
                 fork.MoveFast = fork.Leash.Returning || distanceToLead > 15f;
 
-                var post = TeamModes.GetGuardPost(data.McsAILeadPlayer, BotOwner);
+                var defending = TeamModes.IsDefending(data.McsAILeadPlayer);
+                var post = defending ? TeamModes.GetDefendPost(data.McsAILeadPlayer, BotOwner) : TeamModes.GetGuardPost(data.McsAILeadPlayer, BotOwner);
                 if (post != null)
                 {
                     fork.HasGuardSpot = true;
@@ -112,11 +123,13 @@ namespace MiyakoCarryService.Client.C2Sain.Layers
                     PickFollowSpot(fork, leadPos);
                 }
 
-                if (fork.HasGuardSpot && Vector3.Distance(BotOwner.Position, fork.GuardSpot) > AT_SPOT)
+                var toSpot = fork.HasGuardSpot ? Vector3.Distance(BotOwner.Position, fork.GuardSpot) : 0f;
+                fork.LookOutwardWhileMoving = defending && post != null && toSpot <= SHIFT_LOOK_DISTANCE;
+                if (fork.HasGuardSpot && toSpot > AT_SPOT)
                 {
                     _currentMoveTarget = fork.GuardSpot;
                     ApplyMovePoint();
-                    return new Action(typeof(GuardMoveLogic), fork.Leash.Returning ? "C2Sain:Return" : "C2Sain:ToGuardSpot");
+                    return new Action(typeof(GuardMoveLogic), fork.Leash.Returning ? "C2Sain:Return" : defending ? "C2Sain:ToDefendSpot" : "C2Sain:ToGuardSpot");
                 }
 
                 if (!fork.HasGuardSpot && distanceToLead > ForkConfig.FollowDistance.Value && TryRefreshLeadTarget(leadPos, now))
@@ -125,6 +138,10 @@ namespace MiyakoCarryService.Client.C2Sain.Layers
                     return new Action(typeof(GuardMoveLogic), "C2Sain:GuardFollow");
                 }
 
+                if (defending)
+                {
+                    return new Action(typeof(GuardWatchLogic), fork.GuardSpotCovered ? "C2Sain:DefendFromCover" : "C2Sain:Defend");
+                }
                 return new Action(typeof(GuardWatchLogic), fork.GuardSpotCovered ? "C2Sain:WatchFromCover" : "C2Sain:Watch");
             }
             catch (Exception e)

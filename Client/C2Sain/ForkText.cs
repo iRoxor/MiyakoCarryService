@@ -94,6 +94,26 @@ namespace MiyakoCarryService.Client.C2Sain
             ["McsFork/ClearTargetArea TargetName"] = "Command carry service player to search the area under your crosshair. Refused while in contact.",
             ["McsFork/TeamClearTargetArea Name"] = "Team Clear Target Area",
             ["McsFork/TeamClearTargetArea TargetName"] = "All carry service players split up and search the area under your crosshair. Refused while in contact.",
+            ["McsFork/DefendMe Name"] = "Defend Me",
+            ["McsFork/DefendMe TargetName"] = "All carry service players stay 3-5 m from you, each covering its own side from cover where there is any, and shift position now and then. In a fight they fight, then come back. Ends when you move 5 m away or order Regroup.",
+
+            // Command menu groups (CommandMgr.BuildTeamMenu and BuildMemberMenu).
+            ["McsFork/MenuCombat Name"] = "Combat",
+            ["McsFork/TeamMenuCombat TargetName"] = "Squad combat orders: engage the enemy, or break off and come back to you",
+            ["McsFork/MemberMenuCombat TargetName"] = "Combat orders: engage the enemy, or break off and come back to you",
+            ["McsFork/MenuPositions Name"] = "Positions",
+            ["McsFork/TeamMenuPositions TargetName"] = "Where the squad stays: defend you up close, hold, regroup, go to a spot, or teleport to you",
+            ["McsFork/MemberMenuPositions TargetName"] = "Where this carry service player stays: hold, regroup, go to a spot, or teleport to you",
+            ["McsFork/MenuTasks Name"] = "Tasks",
+            ["McsFork/TeamMenuTasks TargetName"] = "Squad jobs: clear an area, escort you somewhere, or drop the loot they picked up for you",
+            ["McsFork/MemberMenuTasks TargetName"] = "Jobs: clear an area, escort you somewhere, proxy actions, or drop the loot it picked up for you",
+            ["McsFork/MenuReports Name"] = "Reports",
+            ["McsFork/TeamMenuReports TargetName"] = "Ask the squad for enemy positions or their status",
+            ["McsFork/MemberMenuReports TargetName"] = "Ask for enemy positions or its status",
+            ["McsFork/MenuSettings Name"] = "Settings",
+            ["McsFork/TeamMenuSettings TargetName"] = "Squad aiming and formation",
+            ["McsFork/MenuGear Name"] = "Gear and aiming",
+            ["McsFork/MemberMenuGear TargetName"] = "Open its inventory or change where it aims",
 
             // Replies. Talk keys are the subtitle for a voice trigger; the others are appended keys.
             ["McsFork/CantGetThere"] = "Can't get there.",
@@ -112,6 +132,7 @@ namespace MiyakoCarryService.Client.C2Sain
             ["McsFork/EngageTimeout"] = "Breaking contact, coming back.",
             ["McsFork/ContactMarked"] = "Copy, eyes on.",
             ["McsFork/WatchingSpot"] = "Copy, watching that spot.",
+            ["McsFork/DefendingYou"] = "Copy, staying on you.",
         };
 
         /// <summary>Looks up a fork string.</summary>

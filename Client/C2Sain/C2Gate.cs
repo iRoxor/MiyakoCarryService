@@ -147,7 +147,7 @@ namespace MiyakoCarryService.Client.C2Sain
                 return true;
             }
 
-            reason = "guarding";
+            reason = mode == TeamMode.Defend ? "defending" : "guarding";
             return false;
         }
 

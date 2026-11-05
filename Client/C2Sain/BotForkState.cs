@@ -2,10 +2,11 @@
 //
 // One instance per carry bot, created with and owned by McsBotPlayerData (its
 // Fork property). Written by C2Gate (C2 layer gate), DecisionPolicy and
-// EngageTactics (SAIN decision prefix), McsGuardLayer, the fork's commands
-// (ForkCommands, Break off) and EscortToPointByWayLogic; read by ForkDebug for the
-// overlay and by BotWeaponSelectorPatch. Holds no Unity objects that outlive a
-// raid. Reads and writes no files.
+// EngageTactics (SAIN decision prefix), McsGuardLayer, TeamModes (the Defend Me
+// shift timer), the fork's commands (ForkCommands, Break off) and
+// EscortToPointByWayLogic; read by ForkDebug for the overlay, by GuardMoveLogic
+// and by BotWeaponSelectorPatch. Holds no Unity objects that outlive a raid.
+// Reads and writes no files.
 
 using MiyakoCarryService.Client.C2Sain.Core;
 using SAIN.Preset.Shared.Models.Preset.Personalities;
@@ -28,6 +29,15 @@ namespace MiyakoCarryService.Client.C2Sain
         /// <summary>Escort sprint/walk/wait cycle (EscortToPointByWayLogic).</summary>
         public readonly EscortPacer EscortPace = new(() => Random.value);
 
+        /// <summary>When the bot shifts to a new Defend Me spot (TeamModes.GetDefendPost).</summary>
+        public readonly DefendShuffle DefendShift = new(() => Random.value);
+
+        /// <summary>
+        /// True while the Guard layer wants the bot to keep watching GuardOutward as it walks (a short
+        /// Defend Me shift) instead of looking where it is going; read by GuardMoveLogic.
+        /// </summary>
+        public bool LookOutwardWhileMoving;
+
         /// <summary>True when the C2 layer won the last brain tick (C2Gate).</summary>
         public bool C2Active;
 
@@ -47,7 +57,7 @@ namespace MiyakoCarryService.Client.C2Sain
         /// <summary>Direction (away from the player, or toward a reported threat) the bot scans while guarding.</summary>
         public Vector3 GuardOutward;
 
-        /// <summary>True when the guard spot has cover or a bush toward GuardOutward, so the bot crouches there.</summary>
+        /// <summary>True when the guard spot has cover or a bush toward GuardOutward (the overlay and log say "from cover").</summary>
         public bool GuardSpotCovered;
 
         /// <summary>Which plan gave the current guard spot (GuardPost.Kind, or "follow" for the fallback), for the overlay.</summary>

@@ -13,6 +13,9 @@
 //                     player's side of it with a view down it; spare bots fill the widest gaps.
 //                     Falls back to the detail when no approach is found;
 //   otherwise      -- the detail: posts evenly spaced around the player (GuardFormation.EvenYaws).
+// Defend Me has its own plan (PlanDefend): one spot per bot DEFEND_MIN-DEFEND_MAX m from the player,
+// each in its own sector, and a bot shifting position takes another spot in the same sector
+// (ShiftDefend). TeamModes calls both.
 //
 // A post is placed by BestSpot, within a sector either side of the post's direction. Candidates
 // come from two sources: points just behind solid objects in the sector, found the way SAIN's combat
@@ -24,7 +27,9 @@
 // Detail and contact-report posts try wider sectors (SectorPost, GuardFormationSettings) when the
 // narrower one's best spot has no cover, and take the narrowest covered spot. Until fork v4 a wider
 // sector was tried only when the narrower one had no spot at all, so in open ground a bare spot
-// beat cover just outside the first sector.
+// beat cover just outside the first sector. Since fork v6 every outdoor post and Defend Me spot also
+// keeps out of the player's line of fire: no spot within LineOfFireClearance degrees of where the
+// player looks, or of the reported enemy for a post facing a contact report.
 
 using System.Collections.Generic;
 using MiyakoCarryService.Client.C2Sain.Core;
@@ -49,8 +54,11 @@ namespace MiyakoCarryService.Client.C2Sain
         /// </summary>
         public bool Covered;
 
-        /// <summary>Which plan made it, for the overlay: detail, approach, gap, solo or fan.</summary>
+        /// <summary>Which plan made it, for the overlay: detail, approach, gap, solo, fan or defend.</summary>
         public string Kind;
+
+        /// <summary>Yaw of the sector the spot was searched in; a Defend Me shift searches the same sector again.</summary>
+        public float SectorYaw;
     }
 
     /// <summary>Guard plans; see the file header. Main thread only.</summary>
@@ -90,6 +98,19 @@ namespace MiyakoCarryService.Client.C2Sain
 
         /// <summary>Indoor posts stay within this many metres of the player.</summary>
         private const float INDOOR_MAX_RANGE = 8f;
+
+        /// <summary>Defend Me spots are this many metres from the player (the user's design: 3-5 m).</summary>
+        private const float DEFEND_MIN = 3f;
+        private const float DEFEND_MAX = 5f;
+
+        /// <summary>A Defend Me shift moves the bot at least this far (m), so it visibly changes angle.</summary>
+        private const float SHIFT_MIN_MOVE = 1.5f;
+
+        /// <summary>
+        /// Longest walk (m of navmesh path) a Defend Me shift may take. The design asks for moves of
+        /// 3 s or less; 6 m is about 3 s at the pace GuardMoveLogic walks, not measured in game.
+        /// </summary>
+        private const float SHIFT_MAX_PATH = 6f;
 
         private static readonly Collider[] _colliders = new Collider[512];
         private static readonly List<Collider> _objects = new();
@@ -134,14 +155,14 @@ namespace MiyakoCarryService.Client.C2Sain
                 var yaws = botCount == 1 ? new[] { threatYaw } : GuardFormation.FanYaws(botCount, threatYaw);
                 foreach (var yaw in yaws)
                 {
-                    AddIfFound(posts, SectorPost(player, yaw, _formation.FanWindows, minRange, maxRange, threat, indoors, posts, "fan"));
+                    AddIfFound(posts, SectorPost(player, yaw, _formation.FanWindows, minRange, maxRange, threat, indoors, posts, "fan", threatYaw));
                 }
                 return posts;
             }
 
             if (botCount == 1)
             {
-                AddIfFound(posts, BestSpot(player, GuardFormation.SoloYaw(lookYaw), 90f, minRange, maxRange, null, indoors, posts, "solo"));
+                AddIfFound(posts, BestSpot(player, GuardFormation.SoloYaw(lookYaw), 90f, minRange, maxRange, null, indoors, posts, "solo", lineYaw: lookYaw));
                 return posts;
             }
 
@@ -153,9 +174,63 @@ namespace MiyakoCarryService.Client.C2Sain
 
             foreach (var yaw in GuardFormation.EvenYaws(botCount, lookYaw))
             {
-                AddIfFound(posts, SectorPost(player, yaw, _formation.DetailWindows, minRange, maxRange, null, indoors, posts, "detail"));
+                AddIfFound(posts, SectorPost(player, yaw, _formation.DetailWindows, minRange, maxRange, null, indoors, posts, "detail", lookYaw));
             }
             return posts;
+        }
+
+        /// <summary>
+        /// Defend Me: one spot per bot DEFEND_MIN-DEFEND_MAX m from the player, each bot in its own
+        /// sector (GuardFormation.EvenYaws: two bots take the flanks, a lone bot the player's back),
+        /// behind cover where the sector has any, and facing a contact report when there is one.
+        /// Returns up to <paramref name="botCount"/> spots; fewer when a sector offers none.
+        /// </summary>
+        /// <param name="player">The player's position.</param>
+        /// <param name="look">The player's view direction.</param>
+        /// <param name="botCount">Living carry bots in the squad.</param>
+        /// <param name="threat">A contact report to face, or null.</param>
+        /// <param name="indoors">True inside the game's indoor zones; spots then need a straight navmesh line to the player.</param>
+        public static List<GuardPost> PlanDefend(Vector3 player, Vector3 look, int botCount, Vector3? threat, bool indoors)
+        {
+            var posts = new List<GuardPost>();
+            if (botCount <= 0)
+            {
+                return posts;
+            }
+            CollectObjects(player, DEFEND_MAX + 2f);
+            var window = DefendWindow(botCount);
+            var lookYaw = GuardFormation.YawOf(look.x, look.z);
+            foreach (var yaw in GuardFormation.EvenYaws(botCount, lookYaw))
+            {
+                AddIfFound(posts, BestSpot(player, yaw, window, DEFEND_MIN, DEFEND_MAX, threat, indoors, posts, "defend", lineYaw: lookYaw));
+            }
+            return posts;
+        }
+
+        /// <summary>
+        /// Defend Me: a new spot for a bot shifting position. It is in the same sector as the current
+        /// spot, at least SHIFT_MIN_MOVE m from it, at most SHIFT_MAX_PATH m of walking from the bot,
+        /// and clear of the other bots' spots. Null when the sector has no such spot; the bot then
+        /// stays where it is. Runs a navmesh path query per candidate that passes the cheaper tests.
+        /// </summary>
+        /// <param name="look">The player's view direction now, kept clear (GuardFormationSettings.LineOfFireClearance).</param>
+        /// <param name="current">The bot's current Defend Me spot.</param>
+        /// <param name="botPos">The bot's position.</param>
+        /// <param name="others">The other bots' spots.</param>
+        public static GuardPost ShiftDefend(Vector3 player, Vector3 look, GuardPost current, Vector3 botPos, int botCount, Vector3? threat, bool indoors, List<GuardPost> others)
+        {
+            CollectObjects(player, DEFEND_MAX + 2f);
+            return BestSpot(player, current.SectorYaw, DefendWindow(botCount), DEFEND_MIN, DEFEND_MAX, threat, indoors, others, "defend",
+                p => (p - current.Spot).sqrMagnitude >= SHIFT_MIN_MOVE * SHIFT_MIN_MOVE
+                    && C2Nav.TryCompletePath(botPos, p, out var corners)
+                    && C2Nav.PathLength(botPos, corners) <= SHIFT_MAX_PATH,
+                GuardFormation.YawOf(look.x, look.z));
+        }
+
+        /// <summary>Half-width (degrees) of each Defend Me sector: the whole circle for one bot, an even share otherwise.</summary>
+        private static float DefendWindow(int botCount)
+        {
+            return botCount <= 1 ? 180f : 180f / botCount;
         }
 
         /// <summary>
@@ -168,14 +243,15 @@ namespace MiyakoCarryService.Client.C2Sain
         /// </summary>
         /// <param name="windows">Sector half-widths to try, narrowest first.</param>
         /// <param name="kind">The post kind for the overlay and the log ("detail", "fan").</param>
+        /// <param name="lineYaw">The line of fire to keep clear: where the player looks, or toward the reported enemy.</param>
         private static GuardPost SectorPost(Vector3 player, float yaw, float[] windows, float minRange, float maxRange,
-            Vector3? threat, bool indoors, List<GuardPost> taken, string kind)
+            Vector3? threat, bool indoors, List<GuardPost> taken, string kind, float lineYaw)
         {
             _sectorPosts.Clear();
             _sectorResults.Clear();
             foreach (var window in windows)
             {
-                var post = BestSpot(player, yaw, window, minRange, maxRange, threat, indoors, taken, kind);
+                var post = BestSpot(player, yaw, window, minRange, maxRange, threat, indoors, taken, kind, lineYaw: lineYaw);
                 _sectorPosts.Add(post);
                 _sectorResults.Add(post?.Covered);
                 if (post != null && (post.Covered || !_formation.WidenForCover))
@@ -191,10 +267,13 @@ namespace MiyakoCarryService.Client.C2Sain
         /// The best post in a sector: centred on <paramref name="yaw"/>, <paramref name="window"/> degrees
         /// either side, between the two ranges from the player, at least MIN_POST_SPACING m from posts
         /// already taken, and reachable from the player (indoors on a straight navmesh line, outdoors by a
-        /// short path). Null when no candidate qualifies.
+        /// short path). With <paramref name="lineYaw"/>, a spot within LineOfFireClearance degrees of that
+        /// bearing is refused. Null when no candidate qualifies.
         /// </summary>
+        /// <param name="accept">An extra test a candidate must pass, run after the others; null accepts all.</param>
+        /// <param name="lineYaw">The player's line of fire to keep clear, or null (indoor approach and gap posts).</param>
         private static GuardPost BestSpot(Vector3 player, float yaw, float window, float minRange, float maxRange,
-            Vector3? threat, bool indoors, List<GuardPost> taken, string kind)
+            Vector3? threat, bool indoors, List<GuardPost> taken, string kind, System.Func<Vector3, bool> accept = null, float? lineYaw = null)
         {
             var sector = Quaternion.Euler(0f, yaw, 0f) * Vector3.forward;
             var guarded = threat ?? player + sector * 40f;
@@ -251,6 +330,10 @@ namespace MiyakoCarryService.Client.C2Sain
                 {
                     return;
                 }
+                if (lineYaw.HasValue && !GuardFormation.ClearOfLineOfFire(GuardFormation.YawOf(fromPlayer.x, fromPlayer.z), lineYaw.Value, _formation))
+                {
+                    return;
+                }
                 foreach (var other in taken)
                 {
                     if ((other.Spot - p).sqrMagnitude < MIN_POST_SPACING * MIN_POST_SPACING)
@@ -259,6 +342,10 @@ namespace MiyakoCarryService.Client.C2Sain
                     }
                 }
                 if (!(indoors ? C2Nav.IsInPlayersSpace(player, p) : C2Nav.IsNearPlayerOnFoot(player, p)))
+                {
+                    return;
+                }
+                if (accept != null && !accept(p))
                 {
                     return;
                 }
@@ -276,7 +363,7 @@ namespace MiyakoCarryService.Client.C2Sain
                 if (score > bestScore)
                 {
                     bestScore = score;
-                    best = new GuardPost { Spot = p, Watch = watch, Covered = covered, Kind = kind };
+                    best = new GuardPost { Spot = p, Watch = watch, Covered = covered, Kind = kind, SectorYaw = yaw };
                 }
             }
         }

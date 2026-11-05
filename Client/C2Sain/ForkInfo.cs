@@ -98,10 +98,34 @@ namespace MiyakoCarryService.Client.C2Sain
         ///    or more of the open-ground time, or more than a fifth of detail posts still planned
         ///    bare, sends the widening back for rework. Crouched guards reacting late to enemies the
         ///    user saw (an in-raid report) sends the crouch at bare posts back.
+        ///  6 (2026-11-04) Test build 6, built while the user was away, before any raid with v5. v5's
+        ///    changes ship in this build too, so its falsifiers carry over.
+        ///    Added: Defend Me (Team > Positions), to the user's design in the fork plan. It places the
+        ///    squad's Defend zone (5 m) at the player (TeamModes.StartDefend). Each bot takes a spot 3-5 m
+        ///    out in its own sector, behind cover where there is any (GuardPlanner.PlanDefend). A bot at
+        ///    its spot rolls every 2-3 s: 25% to shift to another spot in its sector (80% for the last bot
+        ///    alive), on a walk of at most 6 m, about 3 s, while watching outward (DefendShuffle,
+        ///    ShiftDefend). In combat SAIN fights as usual and the spots resume afterwards. Leaving the
+        ///    zone or Regroup ends it.
+        ///    Changed: the command menus are grouped into submenus. Team > Combat / Positions / Tasks /
+        ///    Reports / Settings; member > Combat / Positions / Tasks / Reports / Gear and aiming, plus
+        ///    Exclude / Take Over. Every command keeps its behaviour.
+        ///    Fixed: v5's wider guard sectors (up to 80 degrees) could put a post straight ahead of the
+        ///    player again. Outdoor posts and Defend spots now keep 20 degrees clear of where the player
+        ///    looks (of the reported enemy, for posts facing a contact report;
+        ///    GuardFormationSettings.LineOfFireClearance).
+        ///    Measured: nothing yet; no raid has run v5 or v6.
+        ///    Pooling: guard plans and open-ground numbers stay comparable with v5. Defend Me has its own
+        ///    plan header ("defend plan for") and reasons (C2Sain:ToDefendSpot, C2Sain:Defend,
+        ///    C2Sain:DefendFromCover), so leave those out when comparing guard numbers with v5.
+        ///    Falsifiers: Defend bots more than 6 m from a player standing still, a bot never shifting
+        ///    in a minute with squadmates alive, or a Defend bot in the player's line of fire, sends
+        ///    Defend Me back. Any command missing from the menus, or behaving differently from v5,
+        ///    means the menu change broke something.
         /// </summary>
-        public const int ForkVersion = 5;
+        public const int ForkVersion = 6;
 
         /// <summary>Short label used in logs and the overlay.</summary>
-        public const string Label = "C2/SAIN fork v5";
+        public const string Label = "C2/SAIN fork v6";
     }
 }

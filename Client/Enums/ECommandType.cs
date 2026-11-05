@@ -28,6 +28,7 @@ namespace MiyakoCarryService.Client.Enums
         SpotEnemy,
         EngageEnemy,
         EngageEnemyReckless,
+        DefendMe,
 #if DEBUG
         DebugSpawnAI,
         DebugTeleport,

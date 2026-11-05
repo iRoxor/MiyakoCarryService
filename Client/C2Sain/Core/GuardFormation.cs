@@ -38,6 +38,14 @@ namespace MiyakoCarryService.Client.C2Sain.Core
         /// the open for 5 s or more.
         /// </summary>
         public bool WidenForCover = true;
+
+        /// <summary>
+        /// Degrees either side of where the player looks (or of the reported enemy, for a post facing a
+        /// contact report) that no outdoor post or Defend Me spot may take, so no bot stands in the
+        /// player's line of fire (fork v6). The even detail already offsets its sectors half a spacing
+        /// from the view, but v5's wider sectors (up to 80 degrees) reach straight ahead again.
+        /// </summary>
+        public float LineOfFireClearance = 20f;
     }
 
     /// <summary>One way into the player's surroundings: where routes leave, and how many do.</summary>
@@ -132,6 +140,15 @@ namespace MiyakoCarryService.Client.C2Sain.Core
                 }
             }
             return firstFound;
+        }
+
+        /// <summary>
+        /// True when a spot whose bearing from the player is <paramref name="bearingYaw"/> stays clear of
+        /// the line of fire along <paramref name="lineYaw"/> (more than LineOfFireClearance degrees off it).
+        /// </summary>
+        public static bool ClearOfLineOfFire(float bearingYaw, float lineYaw, GuardFormationSettings settings)
+        {
+            return AngleBetween(bearingYaw, lineYaw) > settings.LineOfFireClearance;
         }
 
         /// <summary>Yaw of the horizontal direction (dx, dz).</summary>

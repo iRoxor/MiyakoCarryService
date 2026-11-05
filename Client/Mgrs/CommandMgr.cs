@@ -51,6 +51,7 @@ namespace MiyakoCarryService.Client.Mgrs
             CommandUtils.RegisterCommandHandler(ECommandType.SpotEnemy.ToString(), C2Sain.ContactReports.Report);
             CommandUtils.RegisterCommandHandler(ECommandType.EngageEnemy.ToString(), C2Sain.ForkCommands.EngageEnemy);
             CommandUtils.RegisterCommandHandler(ECommandType.EngageEnemyReckless.ToString(), C2Sain.ForkCommands.EngageEnemyReckless);
+            CommandUtils.RegisterCommandHandler(ECommandType.DefendMe.ToString(), C2Sain.ForkCommands.DefendMe);
 #if DEBUG
             CommandUtils.RegisterCommandHandler(ECommandType.DebugSpawnAI.ToString(), DebugSpawnAICommandAction);
             CommandUtils.RegisterCommandHandler(ECommandType.DebugTeleport.ToString(), DebugTeleportCommandAction);
@@ -200,59 +201,119 @@ namespace MiyakoCarryService.Client.Mgrs
                 or "StationaryWeaponProxyAction" or "EscortWorld";
         }
 
+        // Fork: the team and member menus are grouped into submenus (Combat, Positions, Tasks, Reports,
+        // and Settings or Gear and aiming) instead of one list of 15-17 entries. Every entry is the one
+        // upstream or the fork already had, with the same command and options; Defend Me is new. Other
+        // mods' additions (CommandUtils.Apply) still land at the top of the team and member menus. On
+        // Your Own stays out of the menus: it also switched looting on, whatever the setting said.
         public virtual void BuildTeamMenu(McsCommandMenu menu, Player[] mcsBotPlayers, bool isTeam)
         {
-            menu.RegisterCommand(Locales.TEAMREPORTABOUTENEMYCOMMAND_NAME, Locales.TEAMREPORTABOUTENEMYCOMMAND_TARGETNAME, ECommandType.ReportAboutEnemy.ToString(), mcsBotPlayers, shouldCheckExclude: false);
-            menu.RegisterCommand(Locales.TEAMREPORTABOUTSELFCOMMAND_NAME, Locales.TEAMREPORTABOUTSELFCOMMAND_TARGETNAME, ECommandType.ReportAboutSelf.ToString(), mcsBotPlayers, shouldCheckExclude: false);
-            // Fork: On Your Own removed from the menus; it also switched looting on, whatever the setting said.
-            menu.RegisterCommand(Locales.TEAMREGROUPCOMMAND_NAME, Locales.TEAMREGROUPCOMMAND_TARGETNAME, ECommandType.Regroup.ToString(), mcsBotPlayers, shouldCheckExclude: isTeam);
-            menu.RegisterCommand(C2Sain.ForkText.Get("McsFork/TeamBreakOff Name"), "McsFork/TeamBreakOff TargetName", ECommandType.FollowMe.ToString(), mcsBotPlayers, shouldCheckExclude: isTeam);
-            // Fork: Engage Enemy orders (C2Sain/EngageTactics.cs).
-            menu.RegisterCommand(C2Sain.ForkText.Get("McsFork/TeamEngage Name"), "McsFork/TeamEngage TargetName", ECommandType.EngageEnemy.ToString(), mcsBotPlayers, shouldCheckExclude: isTeam);
-            menu.RegisterCommand(C2Sain.ForkText.Get("McsFork/TeamEngageReckless Name"), "McsFork/TeamEngageReckless TargetName", ECommandType.EngageEnemyReckless.ToString(), mcsBotPlayers, shouldCheckExclude: isTeam);
-            menu.RegisterCommand(Locales.TEAMGOTOPOINTCOMMAND_NAME, Locales.TEAMGOTOPOINTCOMMAND_TARGETNAME, ECommandType.GoToPoint.ToString(), mcsBotPlayers, resolver: () => Physics.Raycast(Singleton<GameWorld>.Instance.MainPlayer.InteractionRay,
-            out var hit, float.MaxValue, LayersMaskController.HighPolyWithTerrainMask)
-            ? new McsCommandContext { Position = hit.point, ShouldCheckExclude = isTeam } : null, shouldCheckExclude: isTeam);
-            menu.RegisterCommand(Locales.TEAMHOLDPOSITIONCOMMAND_NAME, Locales.TEAMHOLDPOSITIONCOMMAND_TARGETNAME, ECommandType.HoldPosition.ToString(), mcsBotPlayers, shouldCheckExclude: isTeam);
-            menu.RegisterCommand(Locales.TEAMDROPTARGETLOOTCOMMAND_NAME, Locales.TEAMDROPTARGETLOOTCOMMAND_TARGETNAME, ECommandType.DropTargetLoot.ToString(), mcsBotPlayers, shouldCheckExclude: isTeam);
-            menu.RegisterSubMenu(Locales.TEAMESCORTCOMMAND_NAME, Locales.TEAMESCORTCOMMAND_TARGETNAME, m => BuildEscortMenu(m, mcsBotPlayers, isTeam));
-            menu.RegisterSubMenu(Locales.TEAMCHANGEAIMINGBODYPARTTYPECOMMAND_NAME, Locales.TEAMCHANGEAIMINGBODYPARTTYPECOMMAND_TARGETNAME, m => BuildAimingMenu(m, mcsBotPlayers, isTeam));
-            // Fork: renamed Clear Target Area; refused in contact (ClearAreaCommandAction).
-            menu.RegisterCommand(C2Sain.ForkText.Get("McsFork/TeamClearTargetArea Name"), "McsFork/TeamClearTargetArea TargetName", ECommandType.ClearArea.ToString(), mcsBotPlayers, resolver: () => Physics.Raycast(Singleton<GameWorld>.Instance.MainPlayer.InteractionRay, out var hit, float.MaxValue, LayersMaskController.HighPolyWithTerrainMask)
-            ? new McsCommandContext { Position = hit.point, ShouldCheckExclude = isTeam } : null, shouldCheckExclude: isTeam);
-            menu.RegisterSubMenu(Locales.CHANGEFORMATIONCOMMAND_NAME, Locales.CHANGEFORMATIONCOMMAND_TARGETNAME, m => BuildFormationMenu(m, [mcsBotPlayers.FirstOrDefault()], false));
-            menu.RegisterCommand(Locales.TEAMFORCETELEPORTCOMMAND_NAME, Locales.TEAMFORCETELEPORTCOMMAND_TARGETNAME, ECommandType.Teleport.ToString(), mcsBotPlayers, shouldCheckExclude: isTeam);
+            menu.RegisterSubMenu(C2Sain.ForkText.Get("McsFork/MenuCombat Name"), "McsFork/TeamMenuCombat TargetName", m => BuildTeamCombatMenu(m, mcsBotPlayers, isTeam));
+            menu.RegisterSubMenu(C2Sain.ForkText.Get("McsFork/MenuPositions Name"), "McsFork/TeamMenuPositions TargetName", m => BuildTeamPositionsMenu(m, mcsBotPlayers, isTeam));
+            menu.RegisterSubMenu(C2Sain.ForkText.Get("McsFork/MenuTasks Name"), "McsFork/TeamMenuTasks TargetName", m => BuildTeamTasksMenu(m, mcsBotPlayers, isTeam));
+            menu.RegisterSubMenu(C2Sain.ForkText.Get("McsFork/MenuReports Name"), "McsFork/TeamMenuReports TargetName", m => BuildTeamReportsMenu(m, mcsBotPlayers));
+            menu.RegisterSubMenu(C2Sain.ForkText.Get("McsFork/MenuSettings Name"), "McsFork/TeamMenuSettings TargetName", m => BuildTeamSettingsMenu(m, mcsBotPlayers, isTeam));
 
             CommandUtils.Apply(EMenuId.Team.ToString(), menu, mcsBotPlayers);
         }
 
+        /// <summary>Fork: Team ▸ Combat: the Engage orders (C2Sain/EngageTactics.cs) and Break off from combat.</summary>
+        public virtual void BuildTeamCombatMenu(McsCommandMenu menu, Player[] mcsBotPlayers, bool isTeam)
+        {
+            menu.RegisterCommand(C2Sain.ForkText.Get("McsFork/TeamEngage Name"), "McsFork/TeamEngage TargetName", ECommandType.EngageEnemy.ToString(), mcsBotPlayers, shouldCheckExclude: isTeam);
+            menu.RegisterCommand(C2Sain.ForkText.Get("McsFork/TeamEngageReckless Name"), "McsFork/TeamEngageReckless TargetName", ECommandType.EngageEnemyReckless.ToString(), mcsBotPlayers, shouldCheckExclude: isTeam);
+            menu.RegisterCommand(C2Sain.ForkText.Get("McsFork/TeamBreakOff Name"), "McsFork/TeamBreakOff TargetName", ECommandType.FollowMe.ToString(), mcsBotPlayers, shouldCheckExclude: isTeam);
+        }
+
+        /// <summary>Fork: Team ▸ Positions: Defend Me (C2Sain/ForkCommands.cs), Hold Position, Regroup, Go To and Force Teleport All.</summary>
+        public virtual void BuildTeamPositionsMenu(McsCommandMenu menu, Player[] mcsBotPlayers, bool isTeam)
+        {
+            menu.RegisterCommand(C2Sain.ForkText.Get("McsFork/DefendMe Name"), "McsFork/DefendMe TargetName", ECommandType.DefendMe.ToString(), mcsBotPlayers, shouldCheckExclude: isTeam);
+            menu.RegisterCommand(Locales.TEAMHOLDPOSITIONCOMMAND_NAME, Locales.TEAMHOLDPOSITIONCOMMAND_TARGETNAME, ECommandType.HoldPosition.ToString(), mcsBotPlayers, shouldCheckExclude: isTeam);
+            menu.RegisterCommand(Locales.TEAMREGROUPCOMMAND_NAME, Locales.TEAMREGROUPCOMMAND_TARGETNAME, ECommandType.Regroup.ToString(), mcsBotPlayers, shouldCheckExclude: isTeam);
+            menu.RegisterCommand(Locales.TEAMGOTOPOINTCOMMAND_NAME, Locales.TEAMGOTOPOINTCOMMAND_TARGETNAME, ECommandType.GoToPoint.ToString(), mcsBotPlayers, resolver: () => Physics.Raycast(Singleton<GameWorld>.Instance.MainPlayer.InteractionRay,
+            out var hit, float.MaxValue, LayersMaskController.HighPolyWithTerrainMask)
+            ? new McsCommandContext { Position = hit.point, ShouldCheckExclude = isTeam } : null, shouldCheckExclude: isTeam);
+            menu.RegisterCommand(Locales.TEAMFORCETELEPORTCOMMAND_NAME, Locales.TEAMFORCETELEPORTCOMMAND_TARGETNAME, ECommandType.Teleport.ToString(), mcsBotPlayers, shouldCheckExclude: isTeam);
+        }
+
+        /// <summary>Fork: Team ▸ Tasks: Clear Target Area (refused in contact, ClearAreaCommandAction), Escort and Drop Target Loot.</summary>
+        public virtual void BuildTeamTasksMenu(McsCommandMenu menu, Player[] mcsBotPlayers, bool isTeam)
+        {
+            menu.RegisterCommand(C2Sain.ForkText.Get("McsFork/TeamClearTargetArea Name"), "McsFork/TeamClearTargetArea TargetName", ECommandType.ClearArea.ToString(), mcsBotPlayers, resolver: () => Physics.Raycast(Singleton<GameWorld>.Instance.MainPlayer.InteractionRay, out var hit, float.MaxValue, LayersMaskController.HighPolyWithTerrainMask)
+            ? new McsCommandContext { Position = hit.point, ShouldCheckExclude = isTeam } : null, shouldCheckExclude: isTeam);
+            menu.RegisterSubMenu(Locales.TEAMESCORTCOMMAND_NAME, Locales.TEAMESCORTCOMMAND_TARGETNAME, m => BuildEscortMenu(m, mcsBotPlayers, isTeam));
+            menu.RegisterCommand(Locales.TEAMDROPTARGETLOOTCOMMAND_NAME, Locales.TEAMDROPTARGETLOOTCOMMAND_TARGETNAME, ECommandType.DropTargetLoot.ToString(), mcsBotPlayers, shouldCheckExclude: isTeam);
+        }
+
+        /// <summary>Fork: Team ▸ Reports: enemy positions and status. They go to every bot, excluded ones too, as upstream did.</summary>
+        public virtual void BuildTeamReportsMenu(McsCommandMenu menu, Player[] mcsBotPlayers)
+        {
+            menu.RegisterCommand(Locales.TEAMREPORTABOUTENEMYCOMMAND_NAME, Locales.TEAMREPORTABOUTENEMYCOMMAND_TARGETNAME, ECommandType.ReportAboutEnemy.ToString(), mcsBotPlayers, shouldCheckExclude: false);
+            menu.RegisterCommand(Locales.TEAMREPORTABOUTSELFCOMMAND_NAME, Locales.TEAMREPORTABOUTSELFCOMMAND_TARGETNAME, ECommandType.ReportAboutSelf.ToString(), mcsBotPlayers, shouldCheckExclude: false);
+        }
+
+        /// <summary>Fork: Team ▸ Settings: aiming body part and formation preset.</summary>
+        public virtual void BuildTeamSettingsMenu(McsCommandMenu menu, Player[] mcsBotPlayers, bool isTeam)
+        {
+            menu.RegisterSubMenu(Locales.TEAMCHANGEAIMINGBODYPARTTYPECOMMAND_NAME, Locales.TEAMCHANGEAIMINGBODYPARTTYPECOMMAND_TARGETNAME, m => BuildAimingMenu(m, mcsBotPlayers, isTeam));
+            menu.RegisterSubMenu(Locales.CHANGEFORMATIONCOMMAND_NAME, Locales.CHANGEFORMATIONCOMMAND_TARGETNAME, m => BuildFormationMenu(m, [mcsBotPlayers.FirstOrDefault()], false));
+        }
+
         public virtual void BuildMemberMenu(McsCommandMenu menu, Player[] mcsBotPlayers)
         {
+            menu.RegisterSubMenu(C2Sain.ForkText.Get("McsFork/MenuCombat Name"), "McsFork/MemberMenuCombat TargetName", m => BuildMemberCombatMenu(m, mcsBotPlayers));
+            menu.RegisterSubMenu(C2Sain.ForkText.Get("McsFork/MenuPositions Name"), "McsFork/MemberMenuPositions TargetName", m => BuildMemberPositionsMenu(m, mcsBotPlayers));
+            menu.RegisterSubMenu(C2Sain.ForkText.Get("McsFork/MenuTasks Name"), "McsFork/MemberMenuTasks TargetName", m => BuildMemberTasksMenu(m, mcsBotPlayers));
+            menu.RegisterSubMenu(C2Sain.ForkText.Get("McsFork/MenuReports Name"), "McsFork/MemberMenuReports TargetName", m => BuildMemberReportsMenu(m, mcsBotPlayers));
+            menu.RegisterSubMenu(C2Sain.ForkText.Get("McsFork/MenuGear Name"), "McsFork/MemberMenuGear TargetName", m => BuildMemberGearMenu(m, mcsBotPlayers));
             menu.RegisterCommand(Locales.EXCLUDEORTAKEOVERCOMMAND_NAME, Locales.EXCLUDEORTAKEOVERCOMMAND_TARGETNAME, ECommandType.ExcludeOrTakeOver.ToString(), mcsBotPlayers);
-            menu.RegisterCommand(Locales.REPORTABOUTENEMYCOMMAND_NAME, Locales.REPORTABOUTENEMYCOMMAND_TARGETNAME, ECommandType.ReportAboutEnemy.ToString(), mcsBotPlayers);
-            menu.RegisterCommand(Locales.REPORTABOUTSELFCOMMAND_NAME, Locales.REPORTABOUTSELFCOMMAND_TARGETNAME, ECommandType.ReportAboutSelf.ToString(), mcsBotPlayers);
-            // Fork: On Your Own removed from the menus; it also switched looting on, whatever the setting said.
-            menu.RegisterCommand(Locales.REGROUPCOMMAND_NAME, Locales.REGROUPCOMMAND_TARGETNAME, ECommandType.Regroup.ToString(), mcsBotPlayers);
-            menu.RegisterCommand(C2Sain.ForkText.Get("McsFork/BreakOff Name"), "McsFork/BreakOff TargetName", ECommandType.FollowMe.ToString(), mcsBotPlayers);
-            // Fork: Engage Enemy orders (C2Sain/EngageTactics.cs).
+
+            CommandUtils.Apply(EMenuId.Member.ToString(), menu, mcsBotPlayers);
+        }
+
+        /// <summary>Fork: member ▸ Combat: the Engage orders (C2Sain/EngageTactics.cs) and Break off from combat.</summary>
+        public virtual void BuildMemberCombatMenu(McsCommandMenu menu, Player[] mcsBotPlayers)
+        {
             menu.RegisterCommand(C2Sain.ForkText.Get("McsFork/Engage Name"), "McsFork/Engage TargetName", ECommandType.EngageEnemy.ToString(), mcsBotPlayers);
             menu.RegisterCommand(C2Sain.ForkText.Get("McsFork/EngageReckless Name"), "McsFork/EngageReckless TargetName", ECommandType.EngageEnemyReckless.ToString(), mcsBotPlayers);
+            menu.RegisterCommand(C2Sain.ForkText.Get("McsFork/BreakOff Name"), "McsFork/BreakOff TargetName", ECommandType.FollowMe.ToString(), mcsBotPlayers);
+        }
+
+        /// <summary>Fork: member ▸ Positions: Hold Position, Regroup, Go To and Force Teleport.</summary>
+        public virtual void BuildMemberPositionsMenu(McsCommandMenu menu, Player[] mcsBotPlayers)
+        {
+            menu.RegisterCommand(Locales.HOLDPOSITIONCOMMAND_NAME, Locales.HOLDPOSITIONCOMMAND_TARGETNAME, ECommandType.HoldPosition.ToString(), mcsBotPlayers);
+            menu.RegisterCommand(Locales.REGROUPCOMMAND_NAME, Locales.REGROUPCOMMAND_TARGETNAME, ECommandType.Regroup.ToString(), mcsBotPlayers);
             menu.RegisterCommand(Locales.GOTOPOINTCOMMAND_NAME, Locales.GOTOPOINTCOMMAND_TARGETNAME, ECommandType.GoToPoint.ToString(), mcsBotPlayers, resolver: () => Physics.Raycast(Singleton<GameWorld>.Instance.MainPlayer.InteractionRay,
             out var hit, float.MaxValue, LayersMaskController.HighPolyWithTerrainMask)
             ? new McsCommandContext { Position = hit.point } : null);
-            menu.RegisterCommand(Locales.HOLDPOSITIONCOMMAND_NAME, Locales.HOLDPOSITIONCOMMAND_TARGETNAME, ECommandType.HoldPosition.ToString(), mcsBotPlayers);
-            menu.RegisterCommand(Locales.DROPTARGETLOOTCOMMAND_NAME, Locales.DROPTARGETLOOTCOMMAND_TARGETNAME, ECommandType.DropTargetLoot.ToString(), mcsBotPlayers);
-            menu.RegisterCommand(Locales.OPENINVENTORYCOMMAND_NAME, Locales.OPENINVENTORYCOMMAND_TARGETNAME, ECommandType.OpenInventory.ToString(), mcsBotPlayers, isLocal: true, disabled: () => MiyakoCarryServicePlugin.McsPluginClientConfig.BalanceRestriction);
-            menu.RegisterSubMenu(Locales.CHANGEAIMINGBODYPARTTYPECOMMAND_NAME, Locales.CHANGEAIMINGBODYPARTTYPECOMMAND_TARGETNAME, m => BuildAimingMenu(m, mcsBotPlayers, false));
-            menu.RegisterSubMenu(Locales.ESCORTCOMMAND_NAME, Locales.ESCORTCOMMAND_TARGETNAME, m => BuildEscortMenu(m, mcsBotPlayers, false));
-            menu.RegisterSubMenu(Locales.PROXYCOMMAND_NAME, Locales.PROXYCOMMAND_TARGETNAME, m => BuildProxyMenu(m, mcsBotPlayers, false));
-            // Fork: renamed Clear Target Area; refused in contact (ClearAreaCommandAction).
+            menu.RegisterCommand(Locales.FORCETELEPORTCOMMAND_NAME, Locales.FORCETELEPORTCOMMAND_TARGETNAME, ECommandType.Teleport.ToString(), mcsBotPlayers);
+        }
+
+        /// <summary>Fork: member ▸ Tasks: Clear Target Area (refused in contact), Escort, proxy actions and Drop Target Loot.</summary>
+        public virtual void BuildMemberTasksMenu(McsCommandMenu menu, Player[] mcsBotPlayers)
+        {
             menu.RegisterCommand(C2Sain.ForkText.Get("McsFork/ClearTargetArea Name"), "McsFork/ClearTargetArea TargetName", ECommandType.ClearArea.ToString(), mcsBotPlayers, resolver: () => Physics.Raycast(Singleton<GameWorld>.Instance.MainPlayer.InteractionRay,
             out var hit, float.MaxValue, LayersMaskController.HighPolyWithTerrainMask)
             ? new McsCommandContext { Position = hit.point } : null);
-            menu.RegisterCommand(Locales.FORCETELEPORTCOMMAND_NAME, Locales.FORCETELEPORTCOMMAND_TARGETNAME, ECommandType.Teleport.ToString(), mcsBotPlayers);
+            menu.RegisterSubMenu(Locales.ESCORTCOMMAND_NAME, Locales.ESCORTCOMMAND_TARGETNAME, m => BuildEscortMenu(m, mcsBotPlayers, false));
+            menu.RegisterSubMenu(Locales.PROXYCOMMAND_NAME, Locales.PROXYCOMMAND_TARGETNAME, m => BuildProxyMenu(m, mcsBotPlayers, false));
+            menu.RegisterCommand(Locales.DROPTARGETLOOTCOMMAND_NAME, Locales.DROPTARGETLOOTCOMMAND_TARGETNAME, ECommandType.DropTargetLoot.ToString(), mcsBotPlayers);
+        }
 
-            CommandUtils.Apply(EMenuId.Member.ToString(), menu, mcsBotPlayers);
+        /// <summary>Fork: member ▸ Reports: enemy positions and status.</summary>
+        public virtual void BuildMemberReportsMenu(McsCommandMenu menu, Player[] mcsBotPlayers)
+        {
+            menu.RegisterCommand(Locales.REPORTABOUTENEMYCOMMAND_NAME, Locales.REPORTABOUTENEMYCOMMAND_TARGETNAME, ECommandType.ReportAboutEnemy.ToString(), mcsBotPlayers);
+            menu.RegisterCommand(Locales.REPORTABOUTSELFCOMMAND_NAME, Locales.REPORTABOUTSELFCOMMAND_TARGETNAME, ECommandType.ReportAboutSelf.ToString(), mcsBotPlayers);
+        }
+
+        /// <summary>Fork: member ▸ Gear and aiming: Open Inventory (unavailable under balance restrictions) and the aiming body part.</summary>
+        public virtual void BuildMemberGearMenu(McsCommandMenu menu, Player[] mcsBotPlayers)
+        {
+            menu.RegisterCommand(Locales.OPENINVENTORYCOMMAND_NAME, Locales.OPENINVENTORYCOMMAND_TARGETNAME, ECommandType.OpenInventory.ToString(), mcsBotPlayers, isLocal: true, disabled: () => MiyakoCarryServicePlugin.McsPluginClientConfig.BalanceRestriction);
+            menu.RegisterSubMenu(Locales.CHANGEAIMINGBODYPARTTYPECOMMAND_NAME, Locales.CHANGEAIMINGBODYPARTTYPECOMMAND_TARGETNAME, m => BuildAimingMenu(m, mcsBotPlayers, false));
         }
 
 #if DEBUG
@@ -796,6 +857,7 @@ namespace MiyakoCarryService.Client.Mgrs
                 mcsBotPlayerData.IsLooting = false;
                 mcsBotPlayerData.TargetPos = null;
                 mcsBotPlayerData.ProxyTargetId = null;
+                C2Sain.TeamModes.CancelDefend(mcsBotPlayerData.McsAILeadPlayer); // Fork: Regroup also ends Defend Me
             }
             botOwner.TalkMsg(new McsMsg
             {

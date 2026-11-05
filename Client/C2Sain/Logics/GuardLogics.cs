@@ -1,10 +1,11 @@
 // GuardLogics.cs -- the two BigBrain logics McsGuardLayer runs.
 //
-//   GuardMoveLogic  -- go to the move target the layer set (guard spot, the way
-//                      back after a chase, or a flank leg's point): sprint when
-//                      the layer flags MoveFast, otherwise walk upright, watching
-//                      the enemy's last known position on a flank leg and the
-//                      way ahead otherwise. Uses the game's GoToSomePoint node,
+//   GuardMoveLogic  -- go to the move target the layer set (guard or Defend spot,
+//                      the way back after a chase, or a flank leg's point): sprint
+//                      when the layer flags MoveFast, otherwise walk upright,
+//                      watching the enemy's last known position on a flank leg,
+//                      the bot's outward direction on a short Defend Me shift, and
+//                      the way ahead otherwise. Uses the game's GoToSomePoint node,
 //                      so the game's door handling applies.
 //   GuardWatchLogic -- hold still, crouched, and watch: an enemy SAIN sees
 //                      first, then the squad's threat or contact report
@@ -58,6 +59,10 @@ namespace MiyakoCarryService.Client.C2Sain.Logics
             {
                 var anchor = fork.Engage.FlankAnchor;
                 BotOwner.Steering.LookToPoint(new Vector3(anchor.X, anchor.Y + 1.2f, anchor.Z));
+            }
+            else if (fork != null && fork.LookOutwardWhileMoving && fork.GuardOutward.sqrMagnitude > 0.01f)
+            {
+                BotOwner.Steering.LookToDirection(fork.GuardOutward, 120f);
             }
             else
             {

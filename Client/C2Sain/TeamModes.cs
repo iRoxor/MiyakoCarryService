@@ -10,9 +10,16 @@
 // and the plan is remade when the player has moved REPLAN_MOVE m, a contact
 // report arrives or expires, or the number of living bots changes. BrainMgr.
 // OnRaidEnded calls Clear(). No MonoBehaviour is involved.
+// Defend Me (ForkCommands.DefendMe) places the machine's Defend zone through
+// StartDefend; Regroup ends it through CancelDefend, and so does the player
+// leaving the zone. While the zone exists McsGuardLayer asks GetDefendPost instead:
+// a squad Defend plan (GuardPlanner.PlanDefend), remade when the player has moved
+// DEFEND_REPLAN_MOVE m, a report arrives or expires, or a bot dies, plus each bot's
+// own shifts to new spots (Core/DefendShuffle.cs, GuardPlanner.ShiftDefend).
 // Reads and writes no files; with "Debug: diagnostic log" on it writes mode
-// changes and every guard plan (each bot's post, its cover and the bot's path to
-// it, from GuardPlanner.DescribePost) to the BepInEx log.
+// changes, every guard and Defend plan (each bot's post, its cover and the bot's
+// path to it, from GuardPlanner.DescribePost) and every Defend shift to the
+// BepInEx log.
 
 using System.Collections.Generic;
 using Comfort.Common;
@@ -47,6 +54,15 @@ namespace MiyakoCarryService.Client.C2Sain
         /// <summary>Seconds after the player hits an identified enemy during which the player counts as engaged.</summary>
         private const float PLAYER_SHOT_WINDOW = 3f;
 
+        /// <summary>
+        /// Metres the player may move inside a Defend Me zone before the squad's Defend spots are
+        /// picked again. The spots are 3-5 m out, so a 2 m move already leaves some 1-7 m away.
+        /// </summary>
+        private const float DEFEND_REPLAN_MOVE = 2f;
+
+        /// <summary>A bot this close (m) to its Defend spot counts as there; the same as McsGuardLayer's AT_SPOT.</summary>
+        private const float DEFEND_AT_SPOT = 1.25f;
+
         private sealed class Entry
         {
             public readonly TeamModeMachine Machine = new();
@@ -62,9 +78,13 @@ namespace MiyakoCarryService.Client.C2Sain
             public Vector3 SightingPosition;
             public float SightingTime = -999f;
             public GuardPlanState Plan;
+            public GuardPlanState DefendPlan;
         }
 
-        /// <summary>A squad's guard plan: where it was made, under which report, for how many bots, and each bot's post.</summary>
+        /// <summary>
+        /// A squad's guard or Defend plan: where it was made, under which report, for how many bots, and
+        /// each bot's post. A Defend plan's posts change as bots shift (GetDefendPost).
+        /// </summary>
         private sealed class GuardPlanState
         {
             public Vector3 Anchor;
@@ -77,7 +97,9 @@ namespace MiyakoCarryService.Client.C2Sain
         private static readonly List<BotOwner> _members = new();
         private static readonly List<V3> _botPoints = new();
         private static readonly List<V3> _postPoints = new();
+        private static readonly List<GuardPost> _otherPosts = new();
         private static readonly TeamModeSettings _settings = new();
+        private static readonly DefendShuffleSettings _shiftSettings = new();
         private static McsMgr McsMgr => field ??= MgrAccessor.Get<McsMgr>();
 
         /// <summary>
@@ -158,6 +180,141 @@ namespace MiyakoCarryService.Client.C2Sain
             entry.Machine.StartGuard(new V3(playerPos.x, playerPos.y, playerPos.z), _settings);
         }
 
+        /// <summary>
+        /// Defend Me: places the squad's Defend zone (TeamModeSettings.DefendRadius, 5 m) at the player's
+        /// position, replacing any Guard zone, and drops the old Defend plan so spots are picked afresh.
+        /// Called once per bot that received the order; repeats only re-anchor the zone.
+        /// </summary>
+        /// <param name="lead">The player's MCS lead object.</param>
+        /// <param name="playerPos">Where the player stood when the order was given.</param>
+        public static void StartDefend(McsAILeadPlayer lead, Vector3 playerPos)
+        {
+            var entry = GetEntry(lead);
+            if (entry == null)
+            {
+                return;
+            }
+            RefreshSettings();
+            var startedNow = !(entry.Machine.HasZone && entry.Machine.ZoneIsDefend);
+            entry.Machine.StartDefend(new V3(playerPos.x, playerPos.y, playerPos.z), _settings);
+            entry.DefendPlan = null;
+            if (startedNow && ForkConfig.DebugLog?.Value == true)
+            {
+                McsLogger.LogInfo($"[{ForkInfo.Label}] squad of {lead.McsLeadPlayer?.Profile?.Nickname}: Defend Me ordered");
+            }
+        }
+
+        /// <summary>Ends Defend Me (Regroup does this); a Guard zone is left alone. Logs it when debug logging is on.</summary>
+        /// <param name="lead">The player's MCS lead object.</param>
+        public static void CancelDefend(McsAILeadPlayer lead)
+        {
+            var entry = GetEntry(lead);
+            if (entry == null || !entry.Machine.ZoneIsDefend)
+            {
+                return;
+            }
+            entry.Machine.CancelDefend();
+            entry.DefendPlan = null;
+            if (ForkConfig.DebugLog?.Value == true)
+            {
+                McsLogger.LogInfo($"[{ForkInfo.Label}] squad of {lead.McsLeadPlayer?.Profile?.Nickname}: Defend Me cancelled");
+            }
+        }
+
+        /// <summary>True while the squad has a Defend Me zone, in combat or not.</summary>
+        public static bool IsDefending(McsAILeadPlayer lead)
+        {
+            var machine = Get(lead);
+            return machine != null && machine.HasZone && machine.ZoneIsDefend;
+        }
+
+        /// <summary>
+        /// The spot this bot should hold under Defend Me, from its squad's Defend plan, which is made (or
+        /// made again) first when needed; see the file header. Also rolls the bot's shift timer: a bot
+        /// standing at its spot sometimes moves to another one in its sector (Core/DefendShuffle.cs).
+        /// Null when the plan has no spot for the bot; the Guard layer then falls back to a follow spot.
+        /// </summary>
+        /// <param name="lead">The player's MCS lead object.</param>
+        /// <param name="bot">The carry bot asking.</param>
+        public static GuardPost GetDefendPost(McsAILeadPlayer lead, BotOwner bot)
+        {
+            var entry = GetEntry(lead);
+            var player = lead?.McsLeadPlayer;
+            if (entry == null || player == null || bot == null)
+            {
+                return null;
+            }
+
+            FillMembers(player);
+            var reportId = 0;
+            Vector3? threat = null;
+            if (TryGetReport(lead, out var reportPosition, out var id))
+            {
+                reportId = id;
+                threat = reportPosition;
+            }
+
+            var plan = entry.DefendPlan;
+            var fork = bot.GetMcsBotPlayerData()?.Fork;
+            if (plan == null || plan.ReportId != reportId || plan.BotCount != _members.Count
+                || Vector3.Distance(plan.Anchor, player.Position) > DEFEND_REPLAN_MOVE)
+            {
+                plan = entry.DefendPlan = MakeDefendPlan(player, threat, reportId);
+                foreach (var member in _members)
+                {
+                    member.GetMcsBotPlayerData()?.Fork.DefendShift.Reset();
+                }
+            }
+
+            if (!plan.Posts.TryGetValue(bot.ProfileId, out var post))
+            {
+                _members.Clear();
+                return null;
+            }
+
+            var atSpot = Vector3.Distance(bot.Position, post.Spot) <= DEFEND_AT_SPOT;
+            if (fork != null && fork.DefendShift.Tick(Time.time, atSpot, _members.Count, _shiftSettings))
+            {
+                _otherPosts.Clear();
+                foreach (var pair in plan.Posts)
+                {
+                    if (pair.Key != bot.ProfileId)
+                    {
+                        _otherPosts.Add(pair.Value);
+                    }
+                }
+                var shifted = GuardPlanner.ShiftDefend(player.Position, player.LookDirection, post, bot.Position, _members.Count, threat, IsIndoors(player), _otherPosts);
+                _otherPosts.Clear();
+                if (shifted != null)
+                {
+                    plan.Posts[bot.ProfileId] = shifted;
+                    post = shifted;
+                    if (ForkConfig.DebugLog?.Value == true)
+                    {
+                        McsLogger.LogInfo($"[{ForkInfo.Label}] defend shift for {bot.Profile?.Nickname}: "
+                            + GuardPlanner.DescribePost(player.Position, player.LookDirection, bot.Position, shifted));
+                    }
+                }
+            }
+            _members.Clear();
+            return post;
+        }
+
+        /// <summary>
+        /// Plans Defend spots for the bots in _members and gives each the spot that keeps the squad's total
+        /// walk shortest (GuardFormation.Assign). Logs the plan when debug logging is on, in the guard
+        /// plan's format with the header "defend plan for".
+        /// </summary>
+        private static GuardPlanState MakeDefendPlan(Player player, Vector3? threat, int reportId)
+        {
+            var state = new GuardPlanState { Anchor = player.Position, ReportId = reportId, BotCount = _members.Count };
+            var indoors = IsIndoors(player);
+            var posts = GuardPlanner.PlanDefend(player.Position, player.LookDirection, _members.Count, threat, indoors);
+            AssignPosts(posts, state);
+            LogPlan("defend plan", player, indoors, posts, threat, state);
+            return state;
+        }
+
         /// <summary>Records where the player saw an enemy (MCS's hand-over), as a short-lived look target.</summary>
         public static void RecordSighting(McsAILeadPlayer lead, Vector3 position)
         {
@@ -187,15 +344,7 @@ namespace MiyakoCarryService.Client.C2Sain
                 return null;
             }
 
-            _members.Clear();
-            foreach (var member in McsMgr.GetAllAliveMcsSquadMembersByMcsLeadId(player.ProfileId))
-            {
-                var owner = member?.AIData?.BotOwner;
-                if (owner != null)
-                {
-                    _members.Add(owner);
-                }
-            }
+            FillMembers(player);
             var reportId = 0;
             Vector3? threat = null;
             if (TryGetReport(lead, out var reportPosition, out var id))
@@ -225,7 +374,28 @@ namespace MiyakoCarryService.Client.C2Sain
             var minRange = ForkConfig.GuardPostMin?.Value ?? 3f;
             var maxRange = Mathf.Max(minRange + 1f, ForkConfig.GuardPostMax?.Value ?? 12f);
             var posts = GuardPlanner.Plan(player.Position, player.LookDirection, _members.Count, threat, indoors, minRange, maxRange);
+            AssignPosts(posts, state);
+            LogPlan("guard plan", player, indoors, posts, threat, state);
+            return state;
+        }
 
+        /// <summary>Fills _members with the squad's living carry bots.</summary>
+        private static void FillMembers(Player player)
+        {
+            _members.Clear();
+            foreach (var member in McsMgr.GetAllAliveMcsSquadMembersByMcsLeadId(player.ProfileId))
+            {
+                var owner = member?.AIData?.BotOwner;
+                if (owner != null)
+                {
+                    _members.Add(owner);
+                }
+            }
+        }
+
+        /// <summary>Gives each bot in _members the post that keeps the squad's total walk shortest (GuardFormation.Assign).</summary>
+        private static void AssignPosts(List<GuardPost> posts, GuardPlanState state)
+        {
             _botPoints.Clear();
             _postPoints.Clear();
             foreach (var member in _members)
@@ -245,19 +415,26 @@ namespace MiyakoCarryService.Client.C2Sain
                     state.Posts[_members[i].ProfileId] = posts[assignment[i]];
                 }
             }
+        }
 
-            if (ForkConfig.DebugLog?.Value == true)
+        /// <summary>
+        /// Logs a plan when debug logging is on: a header ("guard plan for" or "defend plan for" the
+        /// player, indoors or outdoors, posts per bots) and one line per bot (GuardPlanner.DescribePost).
+        /// </summary>
+        private static void LogPlan(string what, Player player, bool indoors, List<GuardPost> posts, Vector3? threat, GuardPlanState state)
+        {
+            if (ForkConfig.DebugLog?.Value != true)
             {
-                McsLogger.LogInfo($"[{ForkInfo.Label}] guard plan for {player.Profile?.Nickname}: {(indoors ? "indoors" : "outdoors")}, "
-                    + $"{posts.Count} post(s) for {_members.Count} bot(s){(threat.HasValue ? ", facing a contact report" : "")}");
-                for (var i = 0; i < _members.Count; i++)
-                {
-                    var post = assignment[i] >= 0 ? posts[assignment[i]] : null;
-                    McsLogger.LogInfo($"[{ForkInfo.Label}]   {_members[i].Profile?.Nickname}: "
-                        + GuardPlanner.DescribePost(player.Position, player.LookDirection, _members[i].Position, post));
-                }
+                return;
             }
-            return state;
+            McsLogger.LogInfo($"[{ForkInfo.Label}] {what} for {player.Profile?.Nickname}: {(indoors ? "indoors" : "outdoors")}, "
+                + $"{posts.Count} post(s) for {_members.Count} bot(s){(threat.HasValue ? ", facing a contact report" : "")}");
+            foreach (var member in _members)
+            {
+                state.Posts.TryGetValue(member.ProfileId, out var post);
+                McsLogger.LogInfo($"[{ForkInfo.Label}]   {member.Profile?.Nickname}: "
+                    + GuardPlanner.DescribePost(player.Position, player.LookDirection, member.Position, post));
+            }
         }
 
         /// <summary>

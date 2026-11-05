@@ -1,6 +1,6 @@
 // ForkCommands.cs -- handlers for the commands the fork adds, and the hooks it puts on MCS's others.
 //
-// CommandMgr.Start registers EngageEnemy, EngageEnemyReckless and SpotEnemy
+// CommandMgr.Start registers EngageEnemy, EngageEnemyReckless, DefendMe and SpotEnemy
 // (ContactReports.Report) with CommandUtils. CommandUtils.Execute calls
 // BeforeCommand ahead of every handler, so any other order ends a running Engage
 // order. CommandMgr.ClearAreaCommandAction calls RefuseInContact. SubtitlesMgr
@@ -41,6 +41,31 @@ namespace MiyakoCarryService.Client.C2Sain
         public static void EngageEnemyReckless(McsCommandContext ctx)
         {
             Engage(ctx, EngageKind.Reckless);
+        }
+
+        /// <summary>
+        /// Defend Me: ends the bot's current task as Regroup does, places the squad's Defend zone at the
+        /// player (TeamModes.StartDefend: spots 3-5 m out, shifting now and then, until the player moves
+        /// 5 m away or orders Regroup), and answers "Copy, staying on you.". Runs once per bot that
+        /// received the order. In combat SAIN still fights; the spots resume when the fight ends.
+        /// </summary>
+        public static void DefendMe(McsCommandContext ctx)
+        {
+            var botOwner = ctx?.McsBotPlayer?.AIData?.BotOwner;
+            var data = botOwner?.GetMcsBotPlayerData();
+            var player = data?.McsAILeadPlayer?.McsLeadPlayer;
+            if (data == null || player == null)
+            {
+                return;
+            }
+            botOwner.WeaponManager?.Stationary?.DropCurWeapon(false, true);
+            data.SetIntent([Intents.ShouldKeepFormation, Intents.ShouldFollowMe]);
+            data.MoveResetRequested = true;
+            data.IsLooting = false;
+            data.TargetPos = null;
+            data.ProxyTargetId = null;
+            TeamModes.StartDefend(data.McsAILeadPlayer, player.Position);
+            botOwner.TalkMsg(new McsMsg { PhraseTrigger = EPhraseTrigger.Roger, Keys = ["McsFork/DefendingYou"] });
         }
 
         /// <summary>Starts an Engage order for the context's bot, or refuses it.</summary>

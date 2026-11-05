@@ -6,8 +6,7 @@
 //                      the enemy's last known position on a flank leg and the
 //                      way ahead otherwise. Uses the game's GoToSomePoint node,
 //                      so the game's door handling applies.
-//   GuardWatchLogic -- stand still and watch, crouched when the spot has cover or
-//                      a bush toward the watch direction: an enemy SAIN sees
+//   GuardWatchLogic -- hold still, crouched, and watch: an enemy SAIN sees
 //                      first, then the squad's threat or contact report
 //                      (TeamModes), otherwise scan a +/-70 degree arc around the
 //                      watch direction, turning every 2-4 s. This is what
@@ -70,8 +69,13 @@ namespace MiyakoCarryService.Client.C2Sain.Logics
     /// <summary>Stands still and watches; see the file header for the look priority.</summary>
     public class GuardWatchLogic : McsBotBaseLogic
     {
-        /// <summary>Pose level used at a covered spot (0 = full crouch, 1 = standing).</summary>
-        private const float COVERED_POSE = 0.3f;
+        /// <summary>
+        /// Pose level at every guard post (0 = full crouch, 1 = standing). Fork v3-v4 crouched only at
+        /// posts planned with cover and stood upright at the others. In the build-4 raids (2026-11-04),
+        /// bots standing upright at bare posts made up 212 of the 305 s that bots stood still in the
+        /// open for 5 s or more.
+        /// </summary>
+        private const float WATCH_POSE = 0.3f;
 
         private float _nextLookTime;
         private Vector3 _lookDirection;
@@ -81,14 +85,13 @@ namespace MiyakoCarryService.Client.C2Sain.Logics
         {
         }
 
-        /// <summary>Stops movement, resets the stuck timer's reference position, and crouches at a covered spot.</summary>
+        /// <summary>Stops movement, resets the stuck timer's reference position, and crouches.</summary>
         public override void Start()
         {
             BotOwner.Mover._lastPos = BotOwner.Position;
             BotOwner.StopMove();
             _nextLookTime = 0f;
-            var covered = BotOwner.GetMcsBotPlayerData()?.Fork.GuardSpotCovered == true;
-            BotOwner.SetPose(covered ? COVERED_POSE : 1f);
+            BotOwner.SetPose(WATCH_POSE);
             base.Start();
         }
 

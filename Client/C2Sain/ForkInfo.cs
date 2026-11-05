@@ -76,10 +76,32 @@ namespace MiyakoCarryService.Client.C2Sain
         ///    so comparing them with v3 dumps is unrestricted. Falsifier: the same exception
         ///    (BotCalcGoal.CalcGoalForBot under TryRegisterEnemyForFollower) in any later dump means
         ///    the shut-down test is wrong.
+        ///  5 (2026-11-04) Test build 5, from the user's two Customs raids with v4 (copies in
+        ///    miyako-carry-service/evidence/2026-11-04-build-4-raids; the user saw "no issues that
+        ///    stand out"). v4's falsifier did not fire: three carry bots died, and none of the game's
+        ///    12,926 error entries passed through MCS or the fork. The diagnostic log showed 21 runs of
+        ///    a bot still in the open for 5 s or more, 305 s in all. Of that, 212 s (9 runs) was
+        ///    C2Sain:Watch at posts planned without cover, the bot standing upright, and a quarter of
+        ///    detail posts (106 of 430) were planned bare. Traced: the planner tried a post's wider
+        ///    sectors (25, 50, 80 degrees) only when a narrower one had no spot at all, never because
+        ///    it had no cover, and bots stood upright at bare posts. Changed: detail and
+        ///    contact-report posts try wider sectors until one offers cover and take the narrowest
+        ///    covered spot (GuardFormation.ChooseWindow), and bots crouch at every guard post
+        ///    (GuardWatchLogic). The diagnostic log also names each loot target a bot picks for itself
+        ///    (what, why, whether on a body, in a container or on the ground, how far) and whether it
+        ///    took it (LootLog). Emergency resupply already searched bodies within 30 m; the user
+        ///    chose to keep it running whatever Enable Looting says.
+        ///    Pooling: the open-ground numbers (dump and log) are measured as in v4, so compare v4
+        ///    with v5 directly, but do not add them together, since the guard behaviour they measure
+        ///    changed. Other dump counts are unaffected.
+        ///    Falsifiers, from raids with the diagnostic log on: C2Sain:Watch at bare posts still half
+        ///    or more of the open-ground time, or more than a fifth of detail posts still planned
+        ///    bare, sends the widening back for rework. Crouched guards reacting late to enemies the
+        ///    user saw (an in-raid report) sends the crouch at bare posts back.
         /// </summary>
-        public const int ForkVersion = 4;
+        public const int ForkVersion = 5;
 
         /// <summary>Short label used in logs and the overlay.</summary>
-        public const string Label = "C2/SAIN fork v4";
+        public const string Label = "C2/SAIN fork v5";
     }
 }

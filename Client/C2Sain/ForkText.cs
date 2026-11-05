@@ -72,7 +72,7 @@ namespace MiyakoCarryService.Client.C2Sain
             ["McsFork/McsFastDoors Key"] = "Movement: MCS fast doors",
             ["McsFork/McsFastDoors Description"] = "Upstream MCS's own door handling, which opens doors instantly and ignores the game's rule on which doors may be opened. Default off: the game's and SAIN's door handling are used instead.",
             ["McsFork/DebugLog Key"] = "Debug: diagnostic log",
-            ["McsFork/DebugLog Description"] = "Write what the carry bots decide to BepInEx\\LogOutput.log: squad mode changes, cut chases, contact reports, Engage orders, personality re-rolls, every guard plan with each bot's post and its cover, and any bot that has stood still in the open for 5 s (with what it was doing). Turn it on when you want to report a problem. Default off.",
+            ["McsFork/DebugLog Description"] = "Write what the carry bots decide to BepInEx\\LogOutput.log: squad mode changes, cut chases, contact reports, Engage orders, personality re-rolls, every guard plan with each bot's post and its cover, any bot that has stood still in the open for 5 s (with what it was doing), and each item a bot goes to loot by itself (why, and whether it lies on a body, in a container or on the ground) and whether it took it. Turn it on when you want to report a problem. Default off.",
 
             // Commands.
             ["McsFork/BreakOff Name"] = "Break off from combat",

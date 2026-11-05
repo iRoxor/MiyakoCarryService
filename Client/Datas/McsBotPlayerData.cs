@@ -461,6 +461,7 @@ namespace MiyakoCarryService.Client.Datas
                 LootDataMgr.LockLootItemToTarget(containerData);
                 LootDataMgr.LockLootingTargetRootTransform(containerData.RootTransform);
                 LootingTarget = containerData;
+                C2Sain.LootLog.Target(this, containerData, "a better container"); // Fork: diagnostic log
                 return;
             }
 
@@ -480,6 +481,7 @@ namespace MiyakoCarryService.Client.Datas
                 LootDataMgr.LockLootItemToTarget(lootData);
                 LootDataMgr.LockLootingTargetRootTransform(lootData.RootTransform);
                 LootingTarget = lootData;
+                C2Sain.LootLog.Target(this, lootData, $"worth {lootData.Offer.Price} {lootData.Offer.CurrencySignal}"); // Fork: diagnostic log
                 return;
             }
         }
@@ -1311,6 +1313,7 @@ namespace MiyakoCarryService.Client.Datas
             LootDataMgr.LockLootItemToTarget(targetLootData);
             LootDataMgr.LockLootingTargetRootTransform(targetLootData.RootTransform);
             LootingTarget = targetLootData;
+            C2Sain.LootLog.Target(this, targetLootData, C2Sain.LootLog.NeedText(needType)); // Fork: diagnostic log
             return true;
         }
 

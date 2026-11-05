@@ -1,6 +1,7 @@
 // GuardFormation.cs -- the geometry of a guard detail that needs no Unity: where the posts point,
-// which bot takes which post, and how navmesh routes leaving the player's surroundings group into
-// approaches (doorways, hallways, stairwells).
+// how wide a sector a post may move within to find cover (ChooseWindow), which bot takes which post,
+// and how navmesh routes leaving the player's surroundings group into approaches (doorways,
+// hallways, stairwells).
 //
 // Used by GuardPlanner (C2Sain/GuardPlanner.cs), which TeamModes calls when a squad's guard plan is
 // (re)made. Unity-free so the logic harness (.for-claude-to-reference/harnesses/mcs_fork_logic) can
@@ -19,6 +20,24 @@ namespace MiyakoCarryService.Client.C2Sain.Core
     {
         /// <summary>Metres within which route exits count as one approach.</summary>
         public float ExitClusterRadius = 2.5f;
+
+        /// <summary>
+        /// Half-widths (degrees) of the sectors a detail post is searched in, narrowest first. Fork v3-v4
+        /// tried the same three, but only moved on when a sector had no spot at all.
+        /// </summary>
+        public float[] DetailWindows = { 25f, 50f, 80f };
+
+        /// <summary>Half-widths (degrees) of the sectors a post facing a contact report is searched in, narrowest first.</summary>
+        public float[] FanWindows = { 50f, 80f };
+
+        /// <summary>
+        /// True (fork v5): a wider sector is tried when the narrower one's best spot has no cover, and the
+        /// narrowest covered spot wins. False is fork v3-v4: the narrowest sector with any spot wins.
+        /// In the build-4 raids (2026-11-04) the v4 rule left a quarter of detail posts (106 of 430)
+        /// without cover, and bots standing at such posts made up 212 of the 305 s they stood still in
+        /// the open for 5 s or more.
+        /// </summary>
+        public bool WidenForCover = true;
     }
 
     /// <summary>One way into the player's surroundings: where routes leave, and how many do.</summary>
@@ -81,6 +100,38 @@ namespace MiyakoCarryService.Client.C2Sain.Core
                 yaws[i] = Normalize(threatYaw + FanOffsets[i % FanOffsets.Length]);
             }
             return yaws;
+        }
+
+        /// <summary>
+        /// Which sector's spot a post uses, given what each sector offered, narrowest first: null for no
+        /// spot, true for a spot with cover, false for a bare one. With WidenForCover, the narrowest
+        /// covered spot, else the narrowest bare one; without it, the narrowest spot of either kind.
+        /// Returns -1 when no sector had a spot. The list may stop at the first covered sector, as
+        /// GuardPlanner's does, since no later sector can win then.
+        /// </summary>
+        public static int ChooseWindow(IReadOnlyList<bool?> results, GuardFormationSettings settings)
+        {
+            var firstFound = -1;
+            for (var i = 0; i < results.Count; i++)
+            {
+                if (!results[i].HasValue)
+                {
+                    continue;
+                }
+                if (firstFound < 0)
+                {
+                    firstFound = i;
+                    if (!settings.WidenForCover)
+                    {
+                        return i;
+                    }
+                }
+                if (results[i].Value)
+                {
+                    return i;
+                }
+            }
+            return firstFound;
         }
 
         /// <summary>Yaw of the horizontal direction (dx, dz).</summary>

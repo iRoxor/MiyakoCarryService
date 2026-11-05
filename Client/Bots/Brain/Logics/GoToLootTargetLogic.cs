@@ -200,6 +200,7 @@ namespace MiyakoCarryService.Client.Bots.Brain.Logics
 
                 if (await HandleLootAction(mcsBotPlayerData, mcsBotPlayerData.LootingTarget))
                 {
+                    MiyakoCarryService.Client.C2Sain.LootLog.Result(mcsBotPlayerData, mcsBotPlayerData.LootingTarget, true); // Fork: diagnostic log
                     BotOwner.TalkMsg(new McsMsg
                     {
                         PhraseTrigger = EPhraseTrigger.LootGeneric,
@@ -208,6 +209,7 @@ namespace MiyakoCarryService.Client.Bots.Brain.Logics
                 }
                 else
                 {
+                    MiyakoCarryService.Client.C2Sain.LootLog.Result(mcsBotPlayerData, mcsBotPlayerData.LootingTarget, false); // Fork: diagnostic log
                     BotOwner.TalkMsg(new McsMsg
                     {
                         PhraseTrigger = EPhraseTrigger.PhraseNone,

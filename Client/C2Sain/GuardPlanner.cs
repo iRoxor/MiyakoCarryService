@@ -14,11 +14,17 @@
 //                     Falls back to the detail when no approach is found;
 //   otherwise      -- the detail: posts evenly spaced around the player (GuardFormation.EvenYaws).
 //
-// A post is placed by BestSpot. Candidates come from two sources: points just behind solid objects
-// near the post's direction, found the way SAIN's combat cover finder finds them (any collider at
-// least 0.75 m tall and 0.25 m wide: tree trunks, rocks, walls' ends, vehicles, bushes), and random
-// points in the post's sector. Each is scored by C2Nav.ScoreCover. Fork v2 only fired one ray from
-// random points, so a tree trunk counted only when that ray happened to hit it.
+// A post is placed by BestSpot, within a sector either side of the post's direction. Candidates
+// come from two sources: points just behind solid objects in the sector, found the way SAIN's combat
+// cover finder finds them (any collider at least 0.75 m tall and 0.25 m wide: tree trunks, rocks,
+// walls' ends, vehicles, bushes), and random points in the sector. Each is scored by
+// C2Nav.ScoreCover. Fork v2 only fired one ray from random points, so a tree trunk counted only when
+// that ray happened to hit it.
+//
+// Detail and contact-report posts try wider sectors (SectorPost, GuardFormationSettings) when the
+// narrower one's best spot has no cover, and take the narrowest covered spot. Until fork v4 a wider
+// sector was tried only when the narrower one had no spot at all, so in open ground a bare spot
+// beat cover just outside the first sector.
 
 using System.Collections.Generic;
 using MiyakoCarryService.Client.C2Sain.Core;
@@ -37,7 +43,10 @@ namespace MiyakoCarryService.Client.C2Sain
         /// <summary>Horizontal unit direction the bot watches from the spot.</summary>
         public Vector3 Watch;
 
-        /// <summary>True when the spot has cover or a bush toward <see cref="Watch"/> (the bot crouches there).</summary>
+        /// <summary>
+        /// True when the spot has cover or a bush toward <see cref="Watch"/>; the bot then reports
+        /// C2Sain:WatchFromCover there, otherwise C2Sain:Watch. Since fork v5 bots crouch at every post.
+        /// </summary>
         public bool Covered;
 
         /// <summary>Which plan made it, for the overlay: detail, approach, gap, solo or fan.</summary>
@@ -88,6 +97,8 @@ namespace MiyakoCarryService.Client.C2Sain
         private static readonly List<Vector3> _destinations = new();
         private static readonly List<V3> _exits = new();
         private static readonly List<Vector3> _beyond = new();
+        private static readonly List<GuardPost> _sectorPosts = new();
+        private static readonly List<bool?> _sectorResults = new();
         private static readonly GuardFormationSettings _formation = new();
 
         /// <summary>
@@ -123,7 +134,7 @@ namespace MiyakoCarryService.Client.C2Sain
                 var yaws = botCount == 1 ? new[] { threatYaw } : GuardFormation.FanYaws(botCount, threatYaw);
                 foreach (var yaw in yaws)
                 {
-                    AddIfFound(posts, BestSpot(player, yaw, 50f, minRange, maxRange, threat, indoors, posts, "fan"));
+                    AddIfFound(posts, SectorPost(player, yaw, _formation.FanWindows, minRange, maxRange, threat, indoors, posts, "fan"));
                 }
                 return posts;
             }
@@ -142,12 +153,38 @@ namespace MiyakoCarryService.Client.C2Sain
 
             foreach (var yaw in GuardFormation.EvenYaws(botCount, lookYaw))
             {
-                var post = BestSpot(player, yaw, 25f, minRange, maxRange, null, indoors, posts, "detail")
-                    ?? BestSpot(player, yaw, 50f, minRange, maxRange, null, indoors, posts, "detail")
-                    ?? BestSpot(player, yaw, 80f, minRange, maxRange, null, indoors, posts, "detail");
-                AddIfFound(posts, post);
+                AddIfFound(posts, SectorPost(player, yaw, _formation.DetailWindows, minRange, maxRange, null, indoors, posts, "detail"));
             }
             return posts;
+        }
+
+        /// <summary>
+        /// The post for one direction. Runs BestSpot in each sector of <paramref name="windows"/> (degrees
+        /// either side of <paramref name="yaw"/>), narrowest first, and stops at the first sector whose
+        /// best spot has cover. GuardFormation.ChooseWindow then picks that spot, or the narrowest bare
+        /// one when no sector had cover. With GuardFormationSettings.WidenForCover off it stops at the
+        /// first spot of either kind, fork v3-v4's rule for detail posts (v3-v4 searched contact-report
+        /// posts in the 50-degree sector only). Null when no sector had a spot.
+        /// </summary>
+        /// <param name="windows">Sector half-widths to try, narrowest first.</param>
+        /// <param name="kind">The post kind for the overlay and the log ("detail", "fan").</param>
+        private static GuardPost SectorPost(Vector3 player, float yaw, float[] windows, float minRange, float maxRange,
+            Vector3? threat, bool indoors, List<GuardPost> taken, string kind)
+        {
+            _sectorPosts.Clear();
+            _sectorResults.Clear();
+            foreach (var window in windows)
+            {
+                var post = BestSpot(player, yaw, window, minRange, maxRange, threat, indoors, taken, kind);
+                _sectorPosts.Add(post);
+                _sectorResults.Add(post?.Covered);
+                if (post != null && (post.Covered || !_formation.WidenForCover))
+                {
+                    break;
+                }
+            }
+            var index = GuardFormation.ChooseWindow(_sectorResults, _formation);
+            return index >= 0 ? _sectorPosts[index] : null;
         }
 
         /// <summary>

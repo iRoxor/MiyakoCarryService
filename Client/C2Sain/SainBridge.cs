@@ -183,15 +183,6 @@ namespace MiyakoCarryService.Client.C2Sain
             return true;
         }
 
-        /// <summary>
-        /// A fresh personality roll from SAIN's own picker for this bot (forced, nickname and boss rules,
-        /// then each personality's random chance), without applying it. Null without a SAIN component.
-        /// </summary>
-        public static EPersonality? RollPersonality(BotComponent bot)
-        {
-            return bot?.Info?.GetPersonality(out _);
-        }
-
         /// <summary>The bot's current SAIN personality, or null without a SAIN component.</summary>
         public static EPersonality? GetPersonality(BotComponent bot)
         {
@@ -201,7 +192,7 @@ namespace MiyakoCarryService.Client.C2Sain
         /// <summary>
         /// Overrides how long SAIN waits after losing sight of an enemy before it searches. SAIN
         /// recalculates the value from the personality every two minutes and on preset changes,
-        /// so callers re-apply it while their order lasts and call <see cref="RestoreTimeBeforeSearch"/> after.
+        /// so callers re-apply it while their stance lasts and call <see cref="RestoreTimeBeforeSearch"/> after.
         /// </summary>
         public static void SetTimeBeforeSearch(BotComponent bot, float seconds)
         {
@@ -248,15 +239,6 @@ namespace MiyakoCarryService.Client.C2Sain
             var reported = new EnemyPlace(placeData, position, true, EEnemyPlaceType.Vision, null);
             enemy.KnownPlaces.UpdateSquadSeenPlace(reported, UnityEngine.Time.time);
             return enemy;
-        }
-
-        /// <summary>
-        /// True when the enemy is worth engaging: visible now, or its position was updated (seen,
-        /// heard or reported) within <paramref name="maxAgeSeconds"/>.
-        /// </summary>
-        public static bool IsFreshContact(Enemy enemy, float maxAgeSeconds)
-        {
-            return enemy != null && (enemy.IsVisible || enemy.TimeSinceLastKnownUpdated <= maxAgeSeconds);
         }
 
         /// <summary>True when the bot was hit or shot at within the last <paramref name="windowSeconds"/>.</summary>

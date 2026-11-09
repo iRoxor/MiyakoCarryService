@@ -1,9 +1,12 @@
 // ForkCommands.cs -- handlers for the commands the fork adds, and the hooks it puts on MCS's others.
 //
-// CommandMgr.Start registers EngageEnemy, EngageEnemyReckless, DefendMe and SpotEnemy
-// (ContactReports.Report) with CommandUtils. CommandUtils.Execute calls
-// BeforeCommand ahead of every handler, so any other order ends a running Engage
-// order. CommandMgr.ClearAreaCommandAction calls RefuseInContact. SubtitlesMgr
+// CommandMgr.Start registers DefendMe, SpotEnemy (ContactReports.Report) and, since fork v11, the
+// eight stance commands with CommandUtils. The Team stance commands write the squad stance to the
+// "Stance" setting (BepInEx saves it, so it carries over to the next raid) and clear every bot's own
+// stance; a bot's own stance command sets BotForkState.StanceOverride for this raid only (carry bots
+// expire and are rebuilt, so nothing is saved against one). A stance survives every other order.
+// Before v11 the Engage Enemy commands lived here, and every other order ended them through a
+// pre-command hook. CommandMgr.ClearAreaCommandAction calls RefuseInContact. SubtitlesMgr
 // uses ReplaceWithKeys to show the fork's reply text for voice lines it shares
 // with upstream. GameLoop calls EnsureVoiceTriggers when it sets a carry bot up.
 // Writes the bots' MCS and fork state; reads and writes no files.
@@ -32,17 +35,29 @@ namespace MiyakoCarryService.Client.C2Sain
             (EPhraseTrigger.NoisePhrase, 146f),
         };
 
-        /// <summary>Engage Enemy: see EngageTactics. Refused ("Negative, no contact.") without a known enemy.</summary>
-        public static void EngageEnemy(McsCommandContext ctx)
-        {
-            Engage(ctx, EngageKind.Tactical);
-        }
+        /// <summary>Team Stance ▸ Passive: the whole squad holds fire until shot at (Core/Stance.cs).</summary>
+        public static void TeamStancePassive(McsCommandContext ctx) => SetStance(ctx, CarryStance.Passive, true);
 
-        /// <summary>Engage Enemy Wrecklessly: see EngageTactics. Refused without a known enemy.</summary>
-        public static void EngageEnemyReckless(McsCommandContext ctx)
-        {
-            Engage(ctx, EngageKind.Reckless);
-        }
+        /// <summary>Team Stance ▸ Defensive: the whole squad stays close and prefers cover.</summary>
+        public static void TeamStanceDefensive(McsCommandContext ctx) => SetStance(ctx, CarryStance.Defensive, true);
+
+        /// <summary>Team Stance ▸ Aggressive: the whole squad pushes and flanks.</summary>
+        public static void TeamStanceAggressive(McsCommandContext ctx) => SetStance(ctx, CarryStance.Aggressive, true);
+
+        /// <summary>Team Stance ▸ Hyper-aggressive: the whole squad charges.</summary>
+        public static void TeamStanceHyperAggressive(McsCommandContext ctx) => SetStance(ctx, CarryStance.HyperAggressive, true);
+
+        /// <summary>Stance ▸ Passive, for one bot this raid.</summary>
+        public static void StancePassive(McsCommandContext ctx) => SetStance(ctx, CarryStance.Passive, false);
+
+        /// <summary>Stance ▸ Defensive, for one bot this raid.</summary>
+        public static void StanceDefensive(McsCommandContext ctx) => SetStance(ctx, CarryStance.Defensive, false);
+
+        /// <summary>Stance ▸ Aggressive, for one bot this raid.</summary>
+        public static void StanceAggressive(McsCommandContext ctx) => SetStance(ctx, CarryStance.Aggressive, false);
+
+        /// <summary>Stance ▸ Hyper-aggressive, for one bot this raid.</summary>
+        public static void StanceHyperAggressive(McsCommandContext ctx) => SetStance(ctx, CarryStance.HyperAggressive, false);
 
         /// <summary>
         /// Defend Me: ends the bot's current task as Regroup does, places the squad's Defend zone at the
@@ -69,8 +84,17 @@ namespace MiyakoCarryService.Client.C2Sain
             botOwner.TalkMsg(new McsMsg { PhraseTrigger = EPhraseTrigger.Roger, Keys = ["McsFork/DefendingYou"] });
         }
 
-        /// <summary>Starts an Engage order for the context's bot, or refuses it.</summary>
-        private static void Engage(McsCommandContext ctx, EngageKind kind)
+        /// <summary>
+        /// Sets a stance and answers with the stance's acknowledgement. A team order runs once per bot
+        /// (CommandUtils dispatches it to each): it writes the squad stance to the "Stance" setting,
+        /// which BepInEx saves, and clears this bot's own stance so the squad's applies to it. A bot's
+        /// own order sets only that bot's stance, for this raid. EngageTactics.EnsureStance applies the
+        /// change on the bot's next SAIN decision.
+        /// </summary>
+        /// <param name="ctx">The command; its bot receives the stance.</param>
+        /// <param name="stance">The stance chosen.</param>
+        /// <param name="team">True for the Team menu's commands.</param>
+        private static void SetStance(McsCommandContext ctx, CarryStance stance, bool team)
         {
             var botOwner = ctx?.McsBotPlayer?.AIData?.BotOwner;
             var data = botOwner?.GetMcsBotPlayerData();
@@ -78,47 +102,23 @@ namespace MiyakoCarryService.Client.C2Sain
             {
                 return;
             }
-            if (!EngageTactics.HasEngageableContact(botOwner))
+            if (team)
             {
-                botOwner.TalkMsg(new McsMsg { PhraseTrigger = EPhraseTrigger.Negative, Keys = ["McsFork/NoContact"] });
-                return;
+                if (ForkConfig.Stance != null && ForkConfig.Stance.Value != stance)
+                {
+                    ForkConfig.Stance.Value = stance;
+                }
+                data.Fork.StanceOverride = null;
             }
-            botOwner.WeaponManager?.Stationary?.DropCurWeapon(false, true);
-            EngageTactics.Begin(botOwner, data, kind);
-        }
-
-        /// <summary>
-        /// Called by CommandUtils.Execute before any command handler runs: every order other than the
-        /// Engage commands, the contact report and the purely informational ones ends a running Engage
-        /// order (restoring the bot's personality).
-        /// </summary>
-        /// <param name="ctx">The command about to run.</param>
-        public static void BeforeCommand(McsCommandContext ctx)
-        {
-            if (ctx?.CommandType == null || KeepsEngageOrder(ctx.CommandType))
+            else
             {
-                return;
+                data.Fork.StanceOverride = stance;
             }
-            var botOwner = ctx.McsBotPlayer?.AIData?.BotOwner;
-            var data = botOwner?.GetMcsBotPlayerData();
-            if (data != null)
+            if (ForkConfig.DebugLog?.Value == true)
             {
-                EngageTactics.Cancel(botOwner, data);
+                McsLogger.LogInfo($"[{ForkLog.Tag}] stance order: {botOwner.Profile?.Nickname} -> {stance}{(team ? " (squad, saved)" : " (this bot, this raid)")}");
             }
-        }
-
-        /// <summary>Commands that leave a running Engage order alone.</summary>
-        private static bool KeepsEngageOrder(string commandType)
-        {
-            return commandType == nameof(ECommandType.EngageEnemy)
-                || commandType == nameof(ECommandType.EngageEnemyReckless)
-                || commandType == nameof(ECommandType.SpotEnemy)
-                || commandType == nameof(ECommandType.ReportAboutEnemy)
-                || commandType == nameof(ECommandType.ReportAboutSelf)
-                || commandType == nameof(ECommandType.AimingBodyPart)
-                || commandType == nameof(ECommandType.OpenInventory)
-                || commandType == nameof(ECommandType.ChangeFormation)
-                || commandType == nameof(ECommandType.ExcludeOrTakeOver);
+            botOwner.TalkMsg(new McsMsg { PhraseTrigger = EPhraseTrigger.Roger, Keys = [$"McsFork/Stance{stance}Ack"] });
         }
 
         /// <summary>

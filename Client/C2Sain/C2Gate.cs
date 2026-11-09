@@ -4,9 +4,9 @@
 //
 // Called from McsBrainLayer.IsActive and LayerUtils.McsRemoveNonKeepLayers.
 // Writes BotForkState.C2Active / C2Reason and ends Break off (starting the
-// chase leash's grace period). While an Engage order runs, SAIN (and the Guard
-// layer for flank legs) keeps the bot whatever the squad's mode. Reads and
-// writes no files.
+// chase leash's grace period). While an Aggressive bot walks a flank leg, the Guard
+// layer keeps it whatever the squad's mode (EngageTactics.OnFlankLeg; before fork
+// v11 any running Engage order did). Reads and writes no files.
 //
 // Layer stack on a carry bot after injection:
 //   200 C2 (McsBrainLayer)      -- this gate's verdict
@@ -114,9 +114,11 @@ namespace MiyakoCarryService.Client.C2Sain
                 }
             }
 
-            if (fork.Engage.Active)
+            // Fork v11: only a flank leg holds C2 off whatever the squad's mode. Before v11 any running
+            // Engage order did; a stance is permanent, so that would stop Aggressive bots ever following.
+            if (EngageTactics.OnFlankLeg(botOwner, fork, now))
             {
-                reason = "engaging";
+                reason = "flanking";
                 return false;
             }
 

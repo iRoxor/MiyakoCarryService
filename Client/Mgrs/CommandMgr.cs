@@ -49,9 +49,16 @@ namespace MiyakoCarryService.Client.Mgrs
             CommandUtils.RegisterCommandHandler(ECommandType.ExcludeOrTakeOver.ToString(), ExcludeOrTakeOverCommandAction);
             // Fork: the C2/SAIN fork's commands (C2Sain/ForkCommands.cs, C2Sain/ContactReports.cs).
             CommandUtils.RegisterCommandHandler(ECommandType.SpotEnemy.ToString(), C2Sain.ContactReports.Report);
-            CommandUtils.RegisterCommandHandler(ECommandType.EngageEnemy.ToString(), C2Sain.ForkCommands.EngageEnemy);
-            CommandUtils.RegisterCommandHandler(ECommandType.EngageEnemyReckless.ToString(), C2Sain.ForkCommands.EngageEnemyReckless);
             CommandUtils.RegisterCommandHandler(ECommandType.DefendMe.ToString(), C2Sain.ForkCommands.DefendMe);
+            // Fork v11: the stances replace Engage Enemy and Engage Enemy Wrecklessly.
+            CommandUtils.RegisterCommandHandler(ECommandType.TeamStancePassive.ToString(), C2Sain.ForkCommands.TeamStancePassive);
+            CommandUtils.RegisterCommandHandler(ECommandType.TeamStanceDefensive.ToString(), C2Sain.ForkCommands.TeamStanceDefensive);
+            CommandUtils.RegisterCommandHandler(ECommandType.TeamStanceAggressive.ToString(), C2Sain.ForkCommands.TeamStanceAggressive);
+            CommandUtils.RegisterCommandHandler(ECommandType.TeamStanceHyperAggressive.ToString(), C2Sain.ForkCommands.TeamStanceHyperAggressive);
+            CommandUtils.RegisterCommandHandler(ECommandType.StancePassive.ToString(), C2Sain.ForkCommands.StancePassive);
+            CommandUtils.RegisterCommandHandler(ECommandType.StanceDefensive.ToString(), C2Sain.ForkCommands.StanceDefensive);
+            CommandUtils.RegisterCommandHandler(ECommandType.StanceAggressive.ToString(), C2Sain.ForkCommands.StanceAggressive);
+            CommandUtils.RegisterCommandHandler(ECommandType.StanceHyperAggressive.ToString(), C2Sain.ForkCommands.StanceHyperAggressive);
 #if DEBUG
             CommandUtils.RegisterCommandHandler(ECommandType.DebugSpawnAI.ToString(), DebugSpawnAICommandAction);
             CommandUtils.RegisterCommandHandler(ECommandType.DebugTeleport.ToString(), DebugTeleportCommandAction);
@@ -217,12 +224,29 @@ namespace MiyakoCarryService.Client.Mgrs
             CommandUtils.Apply(EMenuId.Team.ToString(), menu, mcsBotPlayers);
         }
 
-        /// <summary>Fork: Team ▸ Combat: the Engage orders (C2Sain/EngageTactics.cs) and Break off from combat.</summary>
+        /// <summary>Fork: Team ▸ Combat: the Stance submenu (fork v11, C2Sain/ForkCommands.cs) and Break off from combat.</summary>
         public virtual void BuildTeamCombatMenu(McsCommandMenu menu, Player[] mcsBotPlayers, bool isTeam)
         {
-            menu.RegisterCommand(C2Sain.ForkText.Get("McsFork/TeamEngage Name"), "McsFork/TeamEngage TargetName", ECommandType.EngageEnemy.ToString(), mcsBotPlayers, shouldCheckExclude: isTeam);
-            menu.RegisterCommand(C2Sain.ForkText.Get("McsFork/TeamEngageReckless Name"), "McsFork/TeamEngageReckless TargetName", ECommandType.EngageEnemyReckless.ToString(), mcsBotPlayers, shouldCheckExclude: isTeam);
+            menu.RegisterSubMenu(C2Sain.ForkText.Get("McsFork/TeamStance Name"), "McsFork/TeamStance TargetName", m => BuildStanceMenu(m, mcsBotPlayers, isTeam));
             menu.RegisterCommand(C2Sain.ForkText.Get("McsFork/TeamBreakOff Name"), "McsFork/TeamBreakOff TargetName", ECommandType.FollowMe.ToString(), mcsBotPlayers, shouldCheckExclude: isTeam);
+        }
+
+        /// <summary>
+        /// Fork v11: the four stances. From the Team menu (<paramref name="isTeam"/>) each sets the squad
+        /// stance, which is saved and carries over to the next raid; from a bot's own menu, that bot's
+        /// stance for this raid.
+        /// </summary>
+        public virtual void BuildStanceMenu(McsCommandMenu menu, Player[] mcsBotPlayers, bool isTeam)
+        {
+            var prefix = isTeam ? "Team" : "";
+            menu.RegisterCommand(C2Sain.ForkText.Get("McsFork/StancePassive Name"), $"McsFork/{prefix}StancePassive TargetName",
+                (isTeam ? ECommandType.TeamStancePassive : ECommandType.StancePassive).ToString(), mcsBotPlayers, shouldCheckExclude: isTeam);
+            menu.RegisterCommand(C2Sain.ForkText.Get("McsFork/StanceDefensive Name"), $"McsFork/{prefix}StanceDefensive TargetName",
+                (isTeam ? ECommandType.TeamStanceDefensive : ECommandType.StanceDefensive).ToString(), mcsBotPlayers, shouldCheckExclude: isTeam);
+            menu.RegisterCommand(C2Sain.ForkText.Get("McsFork/StanceAggressive Name"), $"McsFork/{prefix}StanceAggressive TargetName",
+                (isTeam ? ECommandType.TeamStanceAggressive : ECommandType.StanceAggressive).ToString(), mcsBotPlayers, shouldCheckExclude: isTeam);
+            menu.RegisterCommand(C2Sain.ForkText.Get("McsFork/StanceHyperAggressive Name"), $"McsFork/{prefix}StanceHyperAggressive TargetName",
+                (isTeam ? ECommandType.TeamStanceHyperAggressive : ECommandType.StanceHyperAggressive).ToString(), mcsBotPlayers, shouldCheckExclude: isTeam);
         }
 
         /// <summary>Fork: Team ▸ Positions: Defend Me (C2Sain/ForkCommands.cs), Hold Position, Regroup, Go To and Force Teleport All.</summary>
@@ -272,11 +296,10 @@ namespace MiyakoCarryService.Client.Mgrs
             CommandUtils.Apply(EMenuId.Member.ToString(), menu, mcsBotPlayers);
         }
 
-        /// <summary>Fork: member ▸ Combat: the Engage orders (C2Sain/EngageTactics.cs) and Break off from combat.</summary>
+        /// <summary>Fork: member ▸ Combat: the Stance submenu (fork v11, this bot only) and Break off from combat.</summary>
         public virtual void BuildMemberCombatMenu(McsCommandMenu menu, Player[] mcsBotPlayers)
         {
-            menu.RegisterCommand(C2Sain.ForkText.Get("McsFork/Engage Name"), "McsFork/Engage TargetName", ECommandType.EngageEnemy.ToString(), mcsBotPlayers);
-            menu.RegisterCommand(C2Sain.ForkText.Get("McsFork/EngageReckless Name"), "McsFork/EngageReckless TargetName", ECommandType.EngageEnemyReckless.ToString(), mcsBotPlayers);
+            menu.RegisterSubMenu(C2Sain.ForkText.Get("McsFork/Stance Name"), "McsFork/Stance TargetName", m => BuildStanceMenu(m, mcsBotPlayers, false));
             menu.RegisterCommand(C2Sain.ForkText.Get("McsFork/BreakOff Name"), "McsFork/BreakOff TargetName", ECommandType.FollowMe.ToString(), mcsBotPlayers);
         }
 

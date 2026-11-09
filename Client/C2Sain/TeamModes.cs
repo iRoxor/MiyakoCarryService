@@ -20,6 +20,10 @@
 // a squad Defend plan (GuardPlanner.PlanDefend), remade when the player has moved
 // DEFEND_REPLAN_MOVE m, a report arrives or expires, or a bot dies, plus each bot's
 // own shifts to new spots (Core/DefendShuffle.cs, GuardPlanner.ShiftDefend).
+// Since fork v11 each squad also has a Passive hold-fire gate (Core/Stance.cs, PassiveGate), ticked
+// with the machine and read by DecisionPolicy through IsPassiveReleased: a Passive squad holds fire
+// until a carry bot or the player is shot at, or the player fires at an enemy (when the "Passive:
+// fight when you shoot" setting is on), and is released until the squad leaves combat.
 // Reads and writes no files; with "Debug: diagnostic log" on it writes mode
 // changes, every guard and Defend plan (each bot's post, its cover and the bot's
 // path to it, from GuardPlanner.DescribePost) and every Defend shift to the
@@ -71,6 +75,13 @@ namespace MiyakoCarryService.Client.C2Sain
         private const float PLAYER_SHOT_WINDOW = 3f;
 
         /// <summary>
+        /// Fork v11: seconds a hit or near miss on a bot, a hit on the player, or the player firing at an
+        /// enemy counts as "just now" for the Passive gate. Longer than the 0.2 s tick so no event falls
+        /// between two ticks.
+        /// </summary>
+        private const float PASSIVE_EVENT_WINDOW = 1.5f;
+
+        /// <summary>
         /// Metres the player may move inside a Defend Me zone before the squad's Defend spots are
         /// picked again. The spots are 3-5 m out, so a 2 m move already leaves some 1-7 m away.
         /// </summary>
@@ -104,6 +115,7 @@ namespace MiyakoCarryService.Client.C2Sain
             public float SightingTime = -999f;
             public GuardPlanState Plan;
             public GuardPlanState DefendPlan;
+            public readonly PassiveGate Passive = new();
         }
 
         /// <summary>
@@ -126,6 +138,7 @@ namespace MiyakoCarryService.Client.C2Sain
         private static readonly List<float> _offsets = new();
         private static readonly TeamModeSettings _settings = new();
         private static readonly DefendShuffleSettings _shiftSettings = new();
+        private static readonly StanceSettings _stanceSettings = new();
         private static McsMgr McsMgr => field ??= MgrAccessor.Get<McsMgr>();
 
         /// <summary>
@@ -334,6 +347,17 @@ namespace MiyakoCarryService.Client.C2Sain
             {
                 McsLogger.LogInfo($"[{ForkLog.Tag}] squad of {lead.McsLeadPlayer?.Profile?.Nickname}: Defend Me cancelled");
             }
+        }
+
+        /// <summary>
+        /// Fork v11: whether a Passive squad may fight now (Core/Stance.cs, PassiveGate). Ticks the squad
+        /// first when a tick is due. True when the squad is unknown, so a fault never silences a bot.
+        /// </summary>
+        /// <param name="lead">The player's MCS lead object.</param>
+        public static bool IsPassiveReleased(McsAILeadPlayer lead)
+        {
+            var entry = GetEntry(lead);
+            return entry == null || entry.Passive.Released;
         }
 
         /// <summary>True while the squad has a Defend Me zone, in combat or not.</summary>
@@ -660,6 +684,46 @@ namespace MiyakoCarryService.Client.C2Sain
             {
                 McsLogger.LogInfo($"[{ForkLog.Tag}] squad of {player.Profile?.Nickname}: {before} -> {after}");
             }
+            TickPassive(entry, lead, player, after == TeamMode.Combat, now);
+        }
+
+        /// <summary>
+        /// Fork v11: updates the squad's Passive gate after the machine's tick, and with "Debug:
+        /// diagnostic log" on logs its release and its return to holding fire while any carry bot is
+        /// Passive. Tracked whatever the stance, so a switch to Passive mid-fight keeps fighting.
+        /// </summary>
+        private static void TickPassive(Entry entry, McsAILeadPlayer lead, Player player, bool inCombat, float now)
+        {
+            var botShotAt = false;
+            var anyPassive = false;
+            foreach (var member in McsMgr.GetAllAliveMcsSquadMembersByMcsLeadId(player.ProfileId))
+            {
+                var data = member?.AIData?.BotOwner?.GetMcsBotPlayerData();
+                if (data == null)
+                {
+                    continue;
+                }
+                botShotAt |= SainBridge.IsUnderFire(data, now, PASSIVE_EVENT_WINDOW);
+                anyPassive |= EngageTactics.CurrentStance(data.Fork) == CarryStance.Passive;
+            }
+            var playerShotAt = lead.LastLeadAttackerPlayer != null && now - lead.LastLeadAttackerTime <= PASSIVE_EVENT_WINDOW;
+            var playerFired = now - lead.LastLeadEngageShotTime <= PASSIVE_EVENT_WINDOW;
+            _stanceSettings.PassiveEngagesWhenPlayerShoots = ForkConfig.PassiveEngagesWhenYouShoot?.Value ?? true;
+
+            var change = entry.Passive.Update(inCombat, botShotAt, playerShotAt, playerFired, _stanceSettings);
+            if (change == PassiveEvent.None || !anyPassive || ForkConfig.DebugLog?.Value != true)
+            {
+                return;
+            }
+            var why = entry.Passive.Cause switch
+            {
+                PassiveCause.BotShotAt => "a carry bot was shot at",
+                PassiveCause.PlayerShotAt => "you were hit",
+                _ => "you fired at an enemy",
+            };
+            McsLogger.LogInfo(change == PassiveEvent.Released
+                ? $"[{ForkLog.Tag}] passive: squad of {player.Profile?.Nickname} released to fight ({why})"
+                : $"[{ForkLog.Tag}] passive: squad of {player.Profile?.Nickname} holding fire again (combat over)");
         }
 
         /// <summary>Remembers where the squad's threat is.</summary>

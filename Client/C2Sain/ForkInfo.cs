@@ -290,10 +290,56 @@ namespace MiyakoCarryService.Client.C2Sain
         ///      the player than the bot started, sends the fallback back;
         ///    - bots that again sit still for a whole raid with "reach: ... stays put: no path from the
         ///      bot" mean the bots themselves were off the navmesh (spawn snapping), which v10 does not fix.
+        ///    Result (2026-11-09, one Factory raid with v10; evidence/2026-11-09-build-10-factory): no
+        ///    "off navmesh:" episode. The bots spawned inside the chemical vat, a navmesh piece with no
+        ///    way out that the user traced to the Expanded NavMesh mod, not MCS. v10 logged 3 "reach:"
+        ///    walks from 7 m toward a spot 2 m from the player, which (a partial path ends on the bot's
+        ///    own navmesh piece) was presumably still inside the vat; the user's teleport freed them.
+        ///    No falsifier fired. The same raid was build 9's first indoor test: 12 of 137 indoor guard
+        ///    places (9%) got no post (v7-v8 27%; falsifier at 14%), 5 of 73 indoor plans fell back to
+        ///    the even detail, median plan time 20 ms (max 28). No v9 falsifier fired. Not a falsifier
+        ///    but noted: 106 of 110 approach posts had no cover (v7-v8 105 of 173).
+        /// 11 (2026-11-09) Test build 11: combat stances (Core/Stance.cs), the first part of the command
+        ///    overhaul the user specified on 2026-11-08, with their answers of 2026-11-09.
+        ///    Changed:
+        ///    - Four stances replace Engage Enemy, Engage Enemy Wrecklessly, the allowed-personalities
+        ///      setting, "Engage: longest order" and "I see the enemy: also engage". A Stance submenu
+        ///      under Combat sets them: from the Team menu for the squad (saved to the "Stance" setting,
+        ///      so it carries over), from a bot's own menu for that bot this raid only.
+        ///    - Passive: SAIN's decisions become None (hold fire, let enemies pass) until a carry bot or
+        ///      the player is shot at, or the player fires at an enemy ("Passive fights when you shoot",
+        ///      default on); then the squad fights until it leaves combat. Normal personality.
+        ///    - Defensive (the default): v10's behaviour, Normal personality, no grenades.
+        ///    - Aggressive: Chad, the old Engage Enemy tactics (flank legs, covering fire) whenever SAIN
+        ///      fights, chasing free within 100 m of the player ("Aggressive leash"), then back to 50 m.
+        ///    - Hyper-aggressive: GigaChad or Wreckless, the old reckless rush, no leash.
+        ///    - Grenades only in Aggressive and Hyper-aggressive (SainGrenadePatch on SAIN's
+        ///      GrenadeThrowDecider.GetDecision, plus a ThrowGrenade-decision backstop).
+        ///    - Hold Position now also binds the aggressive stances (an Engage order used to ignore it).
+        ///    - Only a flank leg keeps the C2 layer off regardless of squad mode (an Engage order did for
+        ///      its whole length), so Aggressive bots still follow out of combat.
+        ///    Diagnostics (diagnostic log): each bot's stance at its first decision and every change,
+        ///    stance orders, Passive releases with their cause and returns to holding fire, the first
+        ///    held grenade throw per bot per stance, and the stance on "chase cut" lines. The summary
+        ///    tool prints these from v11.
+        ///    Pooling: a Defensive-only raid pools with v10 for everything v10 measures, except
+        ///    personality counts (v10 kept SAIN's roll among Normal, Chad, GigaChad and Wreckless; v11
+        ///    Defensive is Normal for every bot) and grenade throws (none now). Raids with any other
+        ///    stance do not pool with earlier builds for chase cuts, distances from the player or
+        ///    combat outcomes; split them by stance.
+        ///    Falsifiers:
+        ///    - a carry bot throwing a grenade in Passive or Defensive (seen, or a carry-bot grenade in
+        ///      Raid Review while every bot was in those stances) means a throw path the patch misses;
+        ///    - a Passive squad shooting with no "passive: ... released" line before it, or never
+        ///      returning fire after a "released" line, sends the Passive gate back;
+        ///    - an Aggressive bot logged chasing beyond 110 m of the player, or bots in any stance no
+        ///      longer following the player out of combat, sends the leash or the C2 gate change back;
+        ///    - the user finding Defensive fights noticeably different from v10 (other than no grenades
+        ///      and every bot on Normal) means a v11 change leaked into Defensive.
         /// </summary>
-        public const int ForkVersion = 10;
+        public const int ForkVersion = 11;
 
         /// <summary>Short label used in logs and the overlay.</summary>
-        public const string Label = "C2/SAIN fork v10";
+        public const string Label = "C2/SAIN fork v11";
     }
 }

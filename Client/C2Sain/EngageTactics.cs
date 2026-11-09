@@ -1,27 +1,28 @@
-// EngageTactics.cs -- carries out the Engage Enemy orders and keeps carry bots' SAIN personality.
+// EngageTactics.cs -- applies each carry bot's combat stance: its SAIN personality, its search delay and,
+// in the aggressive stances, the flank-and-cover or rush tactics.
 //
-// Begin/Cancel are called by ForkCommands (the Engage commands, and every other
-// order through CommandUtils.Execute). Apply and EnsurePersonality are called by
-// DecisionPolicy from SAIN's decision prefix, about ten times a second per bot.
-// Writes the bot's fork state (order, flank leg, role, lent personality) and,
-// through SainBridge, SAIN's personality and search delay for the bot. Reads and
-// writes no files.
+// Since fork v11 the stance (Core/Stance.cs) drives everything here; the Engage Enemy orders, the
+// allowed-personalities setting and the order time limits are gone. EnsureStance and Apply are called by
+// DecisionPolicy from SAIN's decision prefix, about ten times a second per bot; CurrentStance by
+// DecisionPolicy, ForkCommands, SainGrenadePatch and ForkDebug. Writes the bot's fork state (applied
+// stance, tactics, flank leg, role) and, through SainBridge, SAIN's personality and search delay for the
+// bot. Reads and writes no files.
 //
-// Engage Enemy (tactical):
-//   - SAIN's Chad personality is lent (in the user's preset: searches after ~16 s,
-//     pushes enemies that are reloading or hurt) and the search delay is cut to
-//     TACTICAL_SEARCH_DELAY; the chase leash does not apply.
-//   - Roles among the squad's bots with a tactical order, ordered by profile id:
-//     a lone bot flanks (the player is the base of fire); with two or more, the
-//     first is the base of fire and the rest flank, alternating sides.
-//   - Base of fire: while any flanker is moving it does not advance; it lays
-//     SAIN's suppressing fire when SAIN has a suppression point, otherwise holds
-//     in cover.
-//   - Flanker: walks a flank leg (run by McsGuardLayer) to a point picked by
-//     C2Nav.TryPickFlankSpot, then SAIN searches the last known position from
-//     there. SAIN has no flanking of its own (checked in SAIN 4.5.1).
-// Engage Enemy Wrecklessly: SAIN's GigaChad or Wreckless personality is lent and
-// the search delay cut to RECKLESS_SEARCH_DELAY; SAIN does the rest.
+// Per stance (the user's spec, 2026-11-08, and mapping choice, 2026-11-09):
+//   - Passive and Defensive: SAIN's Normal personality, SAIN's own search delay, no tactics.
+//   - Aggressive: Chad (in the user's preset: searches after ~16 s, pushes enemies that are reloading or
+//     hurt), search delay cut to TACTICAL_SEARCH_DELAY, and the tactics the old Engage Enemy ran:
+//       - roles among the squad's Aggressive bots, ordered by profile id: a lone bot flanks (the player
+//         is the base of fire); with two or more, the first is the base of fire and the rest flank,
+//         alternating sides;
+//       - base of fire: while any flanker is moving it does not advance; it lays SAIN's suppressing fire
+//         when SAIN has a suppression point, otherwise holds in cover;
+//       - flanker: walks a flank leg (run by McsGuardLayer) to a point picked by C2Nav.TryPickFlankSpot,
+//         then SAIN searches the last known position from there. SAIN has no flanking of its own
+//         (checked in SAIN 4.5.1).
+//   - Hyper-aggressive: GigaChad or Wreckless (the reckless-personality setting), search delay cut to
+//     RECKLESS_SEARCH_DELAY; SAIN does the rest, as the old Engage Enemy Wrecklessly did.
+// The leash per stance is applied by DecisionPolicy, not here.
 
 using System.Collections.Generic;
 using EFT;
@@ -39,23 +40,13 @@ using UnityEngine;
 
 namespace MiyakoCarryService.Client.C2Sain
 {
-    /// <summary>Engage Enemy orders and carry-bot personalities. Main thread only.</summary>
+    /// <summary>Stance personalities and the aggressive stances' tactics. Main thread only.</summary>
     internal static class EngageTactics
     {
-        /// <summary>
-        /// Seconds since the enemy's position was last updated (seen, heard or reported) for an Engage
-        /// command to be accepted. Generous on purpose: the player may give the order well after the
-        /// first shots.
-        /// </summary>
-        private const float ACCEPT_MAX_AGE = 60f;
-
-        /// <summary>Seconds a known position keeps an order alive; past it the order's lost-contact timer runs.</summary>
-        private const float CONTACT_MAX_AGE = 30f;
-
-        /// <summary>Search delay (s) during a tactical order: a short pause, then the approach.</summary>
+        /// <summary>Search delay (s) in the Aggressive stance: a short pause, then the approach.</summary>
         private const float TACTICAL_SEARCH_DELAY = 3f;
 
-        /// <summary>Search delay (s) during a reckless order: straight in, as Wreckless's preset value 0.1 s.</summary>
+        /// <summary>Search delay (s) in the Hyper-aggressive stance: straight in, as Wreckless's preset value 0.1 s.</summary>
         private const float RECKLESS_SEARCH_DELAY = 0.1f;
 
         /// <summary>Seconds after a hit or a near miss during which a flank leg counts as under fire.</summary>
@@ -72,67 +63,76 @@ namespace MiyakoCarryService.Client.C2Sain
         private static McsMgr McsMgr => field ??= MgrAccessor.Get<McsMgr>();
 
         /// <summary>
-        /// True when the bot has an enemy it can be ordered to engage: SAIN's goal enemy visible, or
-        /// updated within ACCEPT_MAX_AGE seconds. Used by the Engage commands to accept or refuse.
+        /// The bot's stance now: its own override when it has one (this raid only), otherwise the squad
+        /// stance in the "Stance" setting (Defensive before the settings are bound).
         /// </summary>
-        public static bool HasEngageableContact(BotOwner botOwner)
+        public static CarryStance CurrentStance(BotForkState fork)
         {
-            var bot = SainBridge.GetSain(botOwner);
-            return bot != null && SainBridge.IsFreshContact(bot.GoalEnemy, ACCEPT_MAX_AGE);
+            return StanceRules.Effective(ForkConfig.Stance?.Value ?? CarryStance.Defensive, fork?.StanceOverride);
         }
 
         /// <summary>
-        /// Starts an Engage order for one bot. Side effects: clears the bot's other orders (as Break
-        /// off does), cancels Break off, lends the order's SAIN personality, shortens SAIN's search
-        /// delay, and says the acknowledgement.
+        /// Keeps the bot's SAIN side in line with its stance, on every decision: when the stance changed
+        /// since the last call, picks its personality (GigaChad or Wreckless drawn once for
+        /// Hyper-aggressive), sets or restores the search delay, starts or ends the aggressive tactics,
+        /// and logs the change with the diagnostic log on. On every call it puts the personality back if
+        /// SAIN changed it (SAIN re-rolls personalities when its preset is reloaded). Returns the stance.
         /// </summary>
-        /// <param name="botOwner">The carry bot.</param>
-        /// <param name="data">Its MCS data.</param>
-        /// <param name="kind">Tactical or Reckless.</param>
-        public static void Begin(BotOwner botOwner, McsBotPlayerData data, EngageKind kind)
+        public static CarryStance EnsureStance(BotComponent bot, BotOwner botOwner, BotForkState fork, float now)
         {
-            var bot = SainBridge.GetSain(botOwner);
-            var fork = data.Fork;
-            RecordBasePersonality(bot, fork);
-
-            data.SetIntent([Intents.ShouldKeepFormation]);
-            data.MoveResetRequested = true;
-            data.IsLooting = false;
-            data.TargetPos = null;
-            data.ProxyTargetId = null;
-            fork.BreakOff.Cancel();
-
-            fork.Engage.Begin(kind, Time.time);
-            fork.EngageRole = "";
-            var lend = kind == EngageKind.Tactical ? EPersonality.Chad : PickRecklessPersonality();
-            if (SainBridge.TryApplyPersonality(bot, lend))
+            var stance = CurrentStance(fork);
+            var current = SainBridge.GetPersonality(bot);
+            if (current != null && !fork.HasSainRoll)
             {
-                fork.PersonalityLent = true;
-                fork.LentPersonality = lend;
+                fork.HasSainRoll = true;
+                fork.SainRolledPersonality = current.Value;
             }
-            SainBridge.SetTimeBeforeSearch(bot, kind == EngageKind.Tactical ? TACTICAL_SEARCH_DELAY : RECKLESS_SEARCH_DELAY);
-            Say(botOwner, EPhraseTrigger.Gogogo, kind == EngageKind.Tactical ? "McsFork/Engaging" : "McsFork/EngagingReckless");
-        }
 
-        /// <summary>
-        /// Ends the bot's Engage order because another order arrived, restoring its personality and
-        /// search delay. Does nothing when no order is running.
-        /// </summary>
-        public static void Cancel(BotOwner botOwner, McsBotPlayerData data)
-        {
-            if (data?.Fork.Engage.Cancel() == true)
+            if (!fork.HasStance || fork.Stance != stance)
             {
-                Restore(SainBridge.GetSain(botOwner), data.Fork);
-                data.Fork.EngageRole = "";
-                data.Fork.EngageTarget = null;
+                var first = !fork.HasStance;
+                var previous = fork.Stance;
+                fork.HasStance = true;
+                fork.Stance = stance;
+                fork.StancePersonality = StanceRules.Personality(stance) switch
+                {
+                    StancePersonality.Chad => EPersonality.Chad,
+                    StancePersonality.Reckless => PickRecklessPersonality(),
+                    _ => EPersonality.Normal,
+                };
+                var kind = StanceRules.Tactics(stance);
+                if (kind == EngageKind.None)
+                {
+                    fork.Engage.Cancel();
+                    fork.EngageRole = "";
+                    SainBridge.RestoreTimeBeforeSearch(bot);
+                }
+                else
+                {
+                    if (fork.Engage.Kind != kind)
+                    {
+                        fork.Engage.Begin(kind, now);
+                        fork.EngageRole = "";
+                    }
+                    SainBridge.SetTimeBeforeSearch(bot, kind == EngageKind.Tactical ? TACTICAL_SEARCH_DELAY : RECKLESS_SEARCH_DELAY);
+                }
+                LogDebug(botOwner, first
+                    ? $"stance {stance} ({fork.StancePersonality}; SAIN rolled {(fork.HasSainRoll ? fork.SainRolledPersonality.ToString() : "?")})"
+                    : $"stance {previous} -> {stance} ({fork.StancePersonality})");
             }
+
+            if (current != null && current.Value != fork.StancePersonality)
+            {
+                SainBridge.TryApplyPersonality(bot, fork.StancePersonality);
+            }
+            return stance;
         }
 
         /// <summary>
-        /// Applies a running Engage order to one set of SAIN decisions, editing them in place.
-        /// Returns true while an order is in force, so the caller skips the chase leash. Side effects:
-        /// ticks the order (ending it restores the personality and says why), plans and advances flank
-        /// legs, records the bot's role, and re-applies the shortened search delay.
+        /// Applies the aggressive stances' tactics to one set of SAIN decisions, editing them in place.
+        /// Returns true while the bot's stance runs tactics (Aggressive or Hyper-aggressive), so the
+        /// caller skips the rules for the cautious stances. Side effects: plans and advances flank legs,
+        /// records the bot's role, and re-applies the shortened search delay.
         /// </summary>
         /// <param name="bot">SAIN's component for the bot.</param>
         /// <param name="botOwner">The carry bot.</param>
@@ -141,7 +141,7 @@ namespace MiyakoCarryService.Client.C2Sain
         /// <param name="squad">SAIN's squad decision.</param>
         /// <param name="enemy">The enemy SAIN is deciding about; may be null.</param>
         /// <param name="now">Game time in seconds.</param>
-        /// <param name="reason">Overlay text describing what the order did, or null.</param>
+        /// <param name="reason">Overlay text describing what the tactics did, or null.</param>
         public static bool Apply(BotComponent bot, BotOwner botOwner, McsBotPlayerData data,
             ref ECombatDecision solo, ref ESquadDecision squad, Enemy enemy, float now, out string reason)
         {
@@ -154,23 +154,11 @@ namespace MiyakoCarryService.Client.C2Sain
                 return false;
             }
 
-            RefreshSettings();
-            if (enemy?.EnemyPlayer != null)
-            {
-                fork.EngageTarget = enemy.EnemyPlayer;
-            }
-            var end = order.Tick(now, SainBridge.IsFreshContact(enemy, CONTACT_MAX_AGE), _settings);
-            if (end != EngageEnd.None)
-            {
-                Finish(botOwner, data, bot, end, now);
-                return false;
-            }
-
             SainBridge.SetTimeBeforeSearch(bot, order.Kind == EngageKind.Tactical ? TACTICAL_SEARCH_DELAY : RECKLESS_SEARCH_DELAY);
             if (order.Kind == EngageKind.Reckless)
             {
                 fork.EngageRole = "rush";
-                reason = "engage: rush";
+                reason = "hyper-aggressive: rush";
                 return true;
             }
 
@@ -186,7 +174,7 @@ namespace MiyakoCarryService.Client.C2Sain
                     solo = ECombatDecision.None;
                     squad = ESquadDecision.None;
                     fork.EngageRole = order.FlankSide < 0 ? "flank L" : "flank R";
-                    reason = "engage: flanking";
+                    reason = "aggressive: flanking";
                     return true;
                 }
                 LogDebug(botOwner, $"flank leg ended: {flankEnd}");
@@ -197,18 +185,18 @@ namespace MiyakoCarryService.Client.C2Sain
             {
                 var wasCovering = fork.EngageRole == "cover";
                 fork.EngageRole = "cover";
-                reason = "engage: base of fire";
+                reason = "aggressive: base of fire";
                 if (!visible && anyFlanking)
                 {
                     if (enemy?.SuppressionTarget != null && bot.Decision.SelfActionDecisions.AmmoRatio >= SUPPRESS_MIN_AMMO)
                     {
                         squad = ESquadDecision.Suppress;
-                        reason = "engage: suppressing";
+                        reason = "aggressive: suppressing";
                     }
                     else if (solo is ECombatDecision.Search or ECombatDecision.RushEnemy or ECombatDecision.MoveToEngage or ECombatDecision.None)
                     {
                         solo = ECombatDecision.SeekCover;
-                        reason = "engage: holding for the flank";
+                        reason = "aggressive: holding for the flank";
                     }
                     if (squad is ESquadDecision.GroupSearch or ESquadDecision.Help or ESquadDecision.PushSuppressedEnemy)
                     {
@@ -223,7 +211,7 @@ namespace MiyakoCarryService.Client.C2Sain
             }
 
             fork.EngageRole = "push";
-            reason = "engage: push";
+            reason = "aggressive: push";
             var lastKnown = enemy?.KnownPlaces?.LastKnownPosition;
             if (ForkConfig.EngageFlanking.Value && lastKnown.HasValue && !visible && !underFire)
             {
@@ -237,7 +225,7 @@ namespace MiyakoCarryService.Client.C2Sain
                         solo = ECombatDecision.None;
                         squad = ESquadDecision.None;
                         fork.EngageRole = side < 0 ? "flank L" : "flank R";
-                        reason = "engage: flank start";
+                        reason = "aggressive: flank start";
                         Say(botOwner, EPhraseTrigger.Gogogo, side < 0 ? "McsFork/FlankLeft" : "McsFork/FlankRight");
                         LogDebug(botOwner, $"flanking {(side < 0 ? "left" : "right")} to {spot} against {lastKnown.Value}");
                     }
@@ -251,146 +239,31 @@ namespace MiyakoCarryService.Client.C2Sain
             return true;
         }
 
-        /// <summary>Re-rolls tried before falling back to the first allowed personality.</summary>
-        private const int MAX_REROLLS = 20;
-
-        /// <summary>Allowed set used before the setting is bound: everything but the four cautious ones.</summary>
-        private const ECarryPersonalities DEFAULT_ALLOWED =
-            ECarryPersonalities.Normal | ECarryPersonalities.Chad | ECarryPersonalities.GigaChad | ECarryPersonalities.Wreckless;
-
         /// <summary>
-        /// Keeps the bot's SAIN personality at what it should be: the one an Engage order lent, else its
-        /// base personality (SAIN's roll when the allowed-personalities setting permits it, otherwise a
-        /// re-roll). SAIN re-rolls personalities when its preset is reloaded, so this runs on every
-        /// decision. Side effects: records SAIN's roll the first time it sees the bot, and re-chooses the
-        /// base when the setting changes.
+        /// Whether the bot is walking a flank leg, which keeps the C2 layer off whatever the squad's mode
+        /// (called by C2Gate). Also ends a leg that no SAIN decision is ticking: on arrival, after the
+        /// leg's time limit, or when the bot's stance no longer runs tactics. Logs a leg that ends here.
         /// </summary>
-        public static void EnsurePersonality(BotComponent bot, BotForkState fork)
+        public static bool OnFlankLeg(BotOwner botOwner, BotForkState fork, float now)
         {
-            var current = SainBridge.GetPersonality(bot);
-            if (current == null)
+            var order = fork.Engage;
+            if (!order.FlankActive)
             {
-                return;
+                return false;
             }
-            RecordBasePersonality(bot, fork);
-            var desired = fork.PersonalityLent ? fork.LentPersonality : fork.BasePersonality;
-            if (current.Value != desired)
+            if (StanceRules.Tactics(CurrentStance(fork)) == EngageKind.None)
             {
-                SainBridge.TryApplyPersonality(bot, desired);
+                order.Cancel();
+                fork.EngageRole = "";
+                LogDebug(botOwner, "flank leg dropped: stance changed");
+                return false;
             }
-        }
-
-        /// <summary>
-        /// Records SAIN's own roll for the bot (once) and chooses its base personality under the current
-        /// allowed-personalities setting (again whenever the setting changes). A banned roll is replaced
-        /// by re-rolling SAIN's own picker, so the allowed personalities keep SAIN's relative odds; if no
-        /// re-roll is allowed (a nickname or boss rule forces one), the first allowed personality in the
-        /// setting's order is used. An empty setting keeps SAIN's roll.
-        /// </summary>
-        private static void RecordBasePersonality(BotComponent bot, BotForkState fork)
-        {
-            var current = SainBridge.GetPersonality(bot);
-            if (current == null)
+            var end = order.UpdateFlank(now, Vector3.Distance(botOwner.Position, ToVector3(order.FlankPoint)), false, false, _settings);
+            if (end != FlankEnd.None)
             {
-                return;
+                LogDebug(botOwner, $"flank leg ended: {end}");
             }
-            if (!fork.HasBasePersonality)
-            {
-                fork.HasBasePersonality = true;
-                fork.SainRolledPersonality = current.Value;
-                fork.BaseForMask = -1;
-            }
-
-            var allowed = ForkConfig.AllowedPersonalities?.Value ?? DEFAULT_ALLOWED;
-            if (fork.BaseForMask == (int)allowed)
-            {
-                return;
-            }
-            fork.BaseForMask = (int)allowed;
-            fork.BasePersonality = ChooseBase(bot, fork.SainRolledPersonality, allowed);
-            if (fork.BasePersonality != fork.SainRolledPersonality && ForkConfig.DebugLog?.Value == true)
-            {
-                McsLogger.LogInfo($"[{ForkLog.Tag}] {bot.BotOwner?.Profile?.Nickname}: SAIN rolled {fork.SainRolledPersonality}, not allowed; using {fork.BasePersonality}");
-            }
-        }
-
-        /// <summary>See <see cref="RecordBasePersonality"/> for the rule.</summary>
-        private static EPersonality ChooseBase(BotComponent bot, EPersonality rolled, ECarryPersonalities allowed)
-        {
-            if (allowed == ECarryPersonalities.None || IsAllowed(rolled, allowed))
-            {
-                return rolled;
-            }
-            for (var i = 0; i < MAX_REROLLS; i++)
-            {
-                var roll = SainBridge.RollPersonality(bot);
-                if (roll.HasValue && IsAllowed(roll.Value, allowed))
-                {
-                    return roll.Value;
-                }
-            }
-            foreach (ECarryPersonalities flag in System.Enum.GetValues(typeof(ECarryPersonalities)))
-            {
-                if (flag != ECarryPersonalities.None && (allowed & flag) != 0
-                    && System.Enum.TryParse(flag.ToString(), out EPersonality first))
-                {
-                    return first;
-                }
-            }
-            return rolled;
-        }
-
-        /// <summary>True when the setting ticks this personality. Ones it does not list (SAIN's Custom personalities) are not allowed.</summary>
-        private static bool IsAllowed(EPersonality personality, ECarryPersonalities allowed)
-        {
-            return System.Enum.TryParse(personality.ToString(), out ECarryPersonalities flag)
-                && flag != ECarryPersonalities.None
-                && (allowed & flag) != 0;
-        }
-
-        /// <summary>
-        /// Wraps up an order that ended on its own: restores the personality, says how it ended ("Enemy
-        /// down" when the last target is dead), and when contact was lost more than FALL_BACK_DISTANCE m
-        /// from the player sends the bot back the way Break off from combat does. A timed-out order
-        /// leaves the bot to the chase leash, which brings it back after its next chase.
-        /// </summary>
-        private static void Finish(BotOwner botOwner, McsBotPlayerData data, BotComponent bot, EngageEnd end, float now)
-        {
-            var fork = data.Fork;
-            Restore(bot, fork);
-            fork.EngageRole = "";
-            var targetDead = fork.EngageTarget?.HealthController != null && !fork.EngageTarget.HealthController.IsAlive;
-            fork.EngageTarget = null;
-
-            if (targetDead)
-            {
-                botOwner.TalkMsg(new McsMsg { PhraseTrigger = EPhraseTrigger.EnemyDown });
-            }
-            else
-            {
-                Say(botOwner, EPhraseTrigger.LostVisual, end == EngageEnd.TimedOut ? "McsFork/EngageTimeout" : "McsFork/LostContact");
-            }
-
-            var lead = data.LeadPlayer;
-            if (end != EngageEnd.TimedOut && lead != null && Vector3.Distance(botOwner.Position, lead.Position) > FALL_BACK_DISTANCE)
-            {
-                fork.BreakOff.Begin(now);
-            }
-            LogDebug(botOwner, $"engage order ended: {end}{(targetDead ? ", target dead" : "")}");
-        }
-
-        /// <summary>Metres from the player beyond which a bot runs back after an order ends without contact.</summary>
-        private const float FALL_BACK_DISTANCE = 15f;
-
-        /// <summary>Undoes what an order lent: the personality and the shortened search delay.</summary>
-        private static void Restore(BotComponent bot, BotForkState fork)
-        {
-            fork.PersonalityLent = false;
-            if (fork.HasBasePersonality)
-            {
-                SainBridge.TryApplyPersonality(bot, fork.BasePersonality);
-            }
-            SainBridge.RestoreTimeBeforeSearch(bot);
+            return order.FlankActive;
         }
 
         /// <summary>GigaChad or Wreckless, per the reckless-personality setting (Random flips a coin).</summary>
@@ -405,8 +278,8 @@ namespace MiyakoCarryService.Client.C2Sain
         }
 
         /// <summary>
-        /// This bot's place among the squad's bots with a tactical order (ordered by profile id), how
-        /// many there are, and whether another of them is walking a flank leg.
+        /// This bot's place among the squad's bots running the tactical kind (Aggressive stance), ordered
+        /// by profile id, how many there are, and whether another of them is walking a flank leg.
         /// </summary>
         private static void GetRole(BotOwner self, McsBotPlayerData data, out int index, out int count, out bool anyOtherFlanking)
         {
@@ -440,22 +313,13 @@ namespace MiyakoCarryService.Client.C2Sain
             _orderedBots.Clear();
         }
 
-        /// <summary>Copies the order length from the BepInEx settings.</summary>
-        private static void RefreshSettings()
-        {
-            if (ForkConfig.EngageMaxSeconds != null)
-            {
-                _settings.MaxSeconds = ForkConfig.EngageMaxSeconds.Value;
-            }
-        }
-
         /// <summary>Has the bot say a voice line with a fork subtitle.</summary>
         private static void Say(BotOwner botOwner, EPhraseTrigger trigger, string key)
         {
             botOwner.TalkMsg(new McsMsg { PhraseTrigger = trigger, Keys = [key] });
         }
 
-        /// <summary>Writes an engage event to the BepInEx log when the fork's debug log is on.</summary>
+        /// <summary>Writes a stance or tactics event to the BepInEx log when the fork's debug log is on.</summary>
         private static void LogDebug(BotOwner botOwner, string text)
         {
             if (ForkConfig.DebugLog?.Value == true)

@@ -11,6 +11,12 @@
 //   - Once a chase is cut, chases stay vetoed until the bot is back within
 //     ReturnRadius of the player.
 //   - A grace period (after Break off reaches the player) vetoes chases too.
+// Since fork v11 the leash depends on the bot's stance (Core/Stance.cs, StanceRules.ApplyLeash):
+//   - Passive and Defensive keep the timed rules above (RangeLimit 0).
+//   - Aggressive (RangeLimit > 0): chasing is free within RangeLimit metres of the player; past it the
+//     chase is cut and chases stay vetoed until the bot is back within ReturnShare of the range.
+//   - Hyper-aggressive (RangeLimit infinite): no limit.
+//   The grace period applies in every stance.
 
 using System;
 
@@ -27,6 +33,15 @@ namespace MiyakoCarryService.Client.C2Sain.Core
 
         /// <summary>A cut-off chase stays vetoed until the bot is this close (metres) to the player.</summary>
         public float ReturnRadius = 6f;
+
+        /// <summary>
+        /// Fork v11: 0 = the timed leash; above 0 = chase freely within this many metres of the player
+        /// (Aggressive); float.PositiveInfinity = no leash (Hyper-aggressive). Set per bot from its stance.
+        /// </summary>
+        public float RangeLimit;
+
+        /// <summary>Fork v11, range leash: a cut chase stays vetoed until the bot is within this share of RangeLimit.</summary>
+        public float ReturnShare = 0.5f;
     }
 
     /// <summary>Per-bot chase timer. Main-thread only.</summary>
@@ -102,6 +117,11 @@ namespace MiyakoCarryService.Client.C2Sain.Core
         /// <returns>True when the chase decision must be replaced.</returns>
         public bool ShouldVeto(float now, bool isChase, int knownEnemies, float distanceToPlayer, ChaseLeashSettings settings)
         {
+            if (settings.RangeLimit > 0f)
+            {
+                return RangeVeto(now, isChase, distanceToPlayer, settings);
+            }
+
             if (Returning && distanceToPlayer <= settings.ReturnRadius)
             {
                 Returning = false;
@@ -134,6 +154,34 @@ namespace MiyakoCarryService.Client.C2Sain.Core
                 return true;
             }
 
+            return false;
+        }
+
+        /// <summary>
+        /// The range leash (fork v11, Aggressive and Hyper-aggressive): a chase is cut once the bot is
+        /// more than RangeLimit metres from the player, and chases stay vetoed until it is back within
+        /// ReturnShare of the range. No chase timer runs. The Break off grace still vetoes.
+        /// </summary>
+        private bool RangeVeto(float now, bool isChase, float distanceToPlayer, ChaseLeashSettings settings)
+        {
+            _chaseStart = -1f;
+            if (Returning && distanceToPlayer <= settings.RangeLimit * settings.ReturnShare)
+            {
+                Returning = false;
+            }
+            if (!isChase)
+            {
+                return false;
+            }
+            if (now < _graceUntil || Returning)
+            {
+                return true;
+            }
+            if (distanceToPlayer > settings.RangeLimit)
+            {
+                Returning = true;
+                return true;
+            }
             return false;
         }
     }

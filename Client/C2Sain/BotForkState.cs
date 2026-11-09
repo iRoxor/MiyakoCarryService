@@ -24,7 +24,7 @@ namespace MiyakoCarryService.Client.C2Sain
         /// <summary>Break off from combat (command, C2Gate).</summary>
         public readonly BreakOff BreakOff = new();
 
-        /// <summary>Engage Enemy orders and their flank legs (ForkCommands, EngageTactics, McsGuardLayer).</summary>
+        /// <summary>The aggressive stances' tactics and their flank legs (EngageTactics, McsGuardLayer).</summary>
         public readonly EngageOrder Engage = new();
 
         /// <summary>Escort sprint/walk/wait cycle (EscortToPointByWayLogic).</summary>
@@ -117,25 +117,27 @@ namespace MiyakoCarryService.Client.C2Sain
         /// <summary>True when the Guard layer wants the bot to hurry (returning from a chase, far away, or flanking).</summary>
         public bool MoveFast;
 
-        /// <summary>The bot's role in the current Engage order, for the overlay ("flank L", "cover", "push").</summary>
+        /// <summary>The bot's role in the aggressive stance tactics, for the overlay ("flank L", "cover", "push").</summary>
         public string EngageRole = "";
 
-        /// <summary>The enemy the current Engage order last aimed at, so its end can say "Enemy down". Cleared when the order ends.</summary>
-        public EFT.Player EngageTarget;
+
+        /// <summary>SAIN's own personality roll for the bot, recorded the first time the fork sees its SAIN component (overlay).</summary>
+        public bool HasSainRoll;
+        public EPersonality SainRolledPersonality;
 
         /// <summary>
-        /// SAIN's own personality roll for the bot, recorded the first time the fork sees its SAIN
-        /// component, and the personality it keeps outside Engage orders: that roll when the allowed-
-        /// personalities setting permits it, otherwise a re-roll (EngageTactics). BaseForMask is the
-        /// setting value the base was chosen under, so a changed setting re-chooses it.
+        /// Fork v11: a stance set from this bot's own menu, for this raid only; null follows the squad
+        /// stance (ForkConfig.Stance). Written by ForkCommands, read through EngageTactics.CurrentStance.
         /// </summary>
-        public bool HasBasePersonality;
-        public EPersonality SainRolledPersonality;
-        public EPersonality BasePersonality;
-        public int BaseForMask = -1;
+        public CarryStance? StanceOverride;
 
-        /// <summary>The personality an Engage order lent, while it is in force.</summary>
-        public bool PersonalityLent;
-        public EPersonality LentPersonality;
+        /// <summary>
+        /// Fork v11: the stance EngageTactics.EnsureStance last applied, and the SAIN personality it
+        /// lends (GigaChad or Wreckless already picked for Hyper-aggressive). HasStance is false until
+        /// the first SAIN decision.
+        /// </summary>
+        public bool HasStance;
+        public CarryStance Stance;
+        public EPersonality StancePersonality;
     }
 }

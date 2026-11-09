@@ -5,7 +5,7 @@
 // it is: the C2 layer has stepped aside (C2Gate) and SAIN has no decision. That
 // happens while guarding (player standing still), in combat when this bot has
 // nothing to shoot, after a chase is cut (it walks the bot back), and during an
-// Engage order's flank leg (EngageTactics vetoes SAIN's decisions for the leg).
+// Aggressive bot's flank leg (EngageTactics vetoes SAIN's decisions for the leg).
 //
 // Behaviour, in order:
 //   - flank leg: go to the leg's point, sprinting while far from it;

@@ -29,6 +29,16 @@ namespace MiyakoCarryService.Client.Enums
         EngageEnemy,
         EngageEnemyReckless,
         DefendMe,
+        // Fork v11: the stances (C2Sain/ForkCommands.cs). EngageEnemy and EngageEnemyReckless above are
+        // no longer in the menus or registered; the names stay so the enum's other values keep their numbers.
+        TeamStancePassive,
+        TeamStanceDefensive,
+        TeamStanceAggressive,
+        TeamStanceHyperAggressive,
+        StancePassive,
+        StanceDefensive,
+        StanceAggressive,
+        StanceHyperAggressive,
 #if DEBUG
         DebugSpawnAI,
         DebugTeleport,

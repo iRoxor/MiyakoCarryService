@@ -3,8 +3,9 @@
 // Called by McsBotPlayerData.UpdateBaseInfo, which MCS runs for each carry bot
 // while the setting Mcs/DrawDebugInfo is on. Shows the squad mode and zone,
 // whether the C2 layer is in charge and why, SAIN's decisions before and after
-// the fork's policy, the bot's SAIN personality, any Engage order (role, flank
-// leg) and the chase leash / Break off state. Reads and writes no files.
+// the fork's policy, the bot's stance (fork v11: whose stance it is, and whether a
+// Passive squad is holding fire), its SAIN personality, the aggressive tactics (role,
+// flank leg) and the chase leash / Break off state. Reads and writes no files.
 
 using System.Text;
 using MiyakoCarryService.Client.Datas;
@@ -63,15 +64,17 @@ namespace MiyakoCarryService.Client.C2Sain
                     .Append(Vector3.Distance(fork.GuardSpot, data.LeadPlayer.Position).ToString("0")).Append(" m from you")
                     .Append(fork.GuardSpotCovered ? ", in cover" : "");
             }
+            var stance = EngageTactics.CurrentStance(fork);
+            _builder.Append('\n').Append("stance: ").Append(stance.ToString()).Append(fork.StanceOverride.HasValue ? " (this bot)" : " (squad)");
+            if (stance == Core.CarryStance.Passive && data.McsAILeadPlayer != null)
+            {
+                _builder.Append(TeamModes.IsPassiveReleased(data.McsAILeadPlayer) ? ", released" : ", holding fire");
+            }
             var personality = SainBridge.GetPersonality(SainBridge.GetSain(data.BotOwner));
             if (personality != null)
             {
                 _builder.Append('\n').Append("personality: ").Append(personality.Value.ToString());
-                if (fork.PersonalityLent)
-                {
-                    _builder.Append(" (lent by order)");
-                }
-                else if (fork.HasBasePersonality && fork.BasePersonality != fork.SainRolledPersonality)
+                if (fork.HasSainRoll && fork.SainRolledPersonality != personality.Value)
                 {
                     _builder.Append(" (SAIN rolled ").Append(fork.SainRolledPersonality.ToString()).Append(')');
                 }
@@ -79,7 +82,7 @@ namespace MiyakoCarryService.Client.C2Sain
             var engage = fork.Engage;
             if (engage.Active)
             {
-                _builder.Append('\n').Append("engage: ").Append(engage.Kind.ToString()).Append(' ').Append((now - engage.StartTime).ToString("0")).Append(" s");
+                _builder.Append('\n').Append("tactics: ").Append(engage.Kind.ToString()).Append(' ').Append((now - engage.StartTime).ToString("0")).Append(" s");
                 if (fork.EngageRole.Length > 0)
                 {
                     _builder.Append(", ").Append(fork.EngageRole);
@@ -89,10 +92,6 @@ namespace MiyakoCarryService.Client.C2Sain
                     var point = new Vector3(engage.FlankPoint.X, engage.FlankPoint.Y, engage.FlankPoint.Z);
                     _builder.Append(", flank point ").Append(Vector3.Distance(data.BotOwner.Position, point).ToString("0")).Append(" m");
                 }
-            }
-            else if (engage.LastEnd != Core.EngageEnd.None)
-            {
-                _builder.Append('\n').Append("last engage ended: ").Append(engage.LastEnd.ToString());
             }
             return _builder.ToString();
         }

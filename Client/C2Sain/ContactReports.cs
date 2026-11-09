@@ -14,8 +14,7 @@
 // but have not seen it themselves: the chase rules still apply and they shoot only
 // when they see it. The squad also switches to Guard at the player with spots and
 // lookouts facing the mark, which stays the guards' focus for 30 s (TeamModes).
-// With "I see the enemy: also engage" on, a report that found an enemy also gives
-// each bot Engage Enemy.
+// (Before fork v11 a setting could also give each bot Engage Enemy; the stances replaced it.)
 
 using Comfort.Common;
 using EFT;
@@ -95,10 +94,6 @@ namespace MiyakoCarryService.Client.C2Sain
             if (bot != null)
             {
                 SainBridge.ShareSighting(bot, _reportEnemy, _reportEnemy.Position);
-            }
-            if (ForkConfig.ReportEngages?.Value == true && bot != null)
-            {
-                EngageTactics.Begin(botOwner, data, EngageKind.Tactical);
             }
         }
 

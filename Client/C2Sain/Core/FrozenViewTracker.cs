@@ -71,6 +71,13 @@ namespace MiyakoCarryService.Client.C2Sain.Core
         public FrozenViewEnd LastEnd { get; private set; }
 
         /// <summary>
+        /// Where the bot looked during the last reported run that ended, in degrees. RunYaw already holds
+        /// the next run's direction by then, because the ending sample starts that run; fork v7's end line
+        /// printed RunYaw and so named the new direction instead (fixed in v8).
+        /// </summary>
+        public float EndedRunYaw { get; private set; }
+
+        /// <summary>
         /// Takes one sample and says whether a run was reported or a reported run ended; see the
         /// file header for the rules.
         /// </summary>
@@ -93,6 +100,7 @@ namespace MiyakoCarryService.Client.C2Sain.Core
                     result = FrozenViewEvent.Ended;
                     LastEnd = !continuous ? FrozenViewEnd.Gap : exempt ? FrozenViewEnd.Exempt : moved ? FrozenViewEnd.Moved : FrozenViewEnd.Turned;
                     RunSeconds = _lastFrozen - _runStart;
+                    EndedRunYaw = RunYaw;
                 }
                 _inRun = false;
                 Reported = false;

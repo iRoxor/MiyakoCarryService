@@ -10,8 +10,10 @@
 //                      around with the look scan instead. Uses the game's
 //                      GoToSomePoint node, so the game's door handling applies.
 //   GuardWatchLogic -- hold still, crouched, and watch: an enemy SAIN sees
-//                      first, then the squad's threat or contact report
-//                      (TeamModes), otherwise the look scan (GuardLook,
+//                      first, then an unseen enemy this bot heard in the last
+//                      6 s (fork v8), then the squad's threat or contact report
+//                      if this guard's sector covers it (TeamModes.ShouldFaceThreat;
+//                      fork v8), otherwise the look scan (GuardLook,
 //                      Core/LookScan.cs): 2-4 s looks within 70 degrees of the watch
 //                      direction, each toward the most open of five tries, and
 //                      every fourth look a check behind. This is what replaces
@@ -129,6 +131,9 @@ namespace MiyakoCarryService.Client.C2Sain.Logics
         /// </summary>
         private const float WATCH_POSE = 0.3f;
 
+        /// <summary>Seconds a place where this bot itself heard an unseen enemy stays its look target (fork v8).</summary>
+        private const float OWN_HEARD_MEMORY = 6f;
+
         /// <summary>Created by BigBrain for one bot.</summary>
         public GuardWatchLogic(BotOwner botOwner) : base(botOwner)
         {
@@ -162,7 +167,14 @@ namespace MiyakoCarryService.Client.C2Sain.Logics
                 return;
             }
 
-            if (mcsData?.McsAILeadPlayer != null && TeamModes.TryGetThreat(mcsData.McsAILeadPlayer, out var threat))
+            if (mcsData != null && SainBridge.TryGetOwnHeard(SainBridge.GetSain(BotOwner), OWN_HEARD_MEMORY, out var heard))
+            {
+                BotOwner.Steering.LookToPoint(heard + Vector3.up * 1.2f);
+                mcsData.Fork.SetLook("at an enemy it heard", Time.time);
+                return;
+            }
+
+            if (mcsData?.McsAILeadPlayer != null && TeamModes.TryGetThreat(mcsData.McsAILeadPlayer, out var threat) && FacesThreat(mcsData, threat))
             {
                 BotOwner.Steering.LookToPoint(threat + Vector3.up * 1.2f);
                 mcsData.Fork.SetLook("at the squad's threat or contact report", Time.time);
@@ -174,6 +186,22 @@ namespace MiyakoCarryService.Client.C2Sain.Logics
                 GuardLook.Scan(BotOwner, mcsData.Fork);
                 mcsData.Fork.SetLook("scanning", Time.time);
             }
+        }
+
+        /// <summary>
+        /// Whether this guard's sector covers the squad's threat (TeamModes.ShouldFaceThreat), worked
+        /// out at most every TeamModes.FACE_CHECK_INTERVAL s and cached in the fork state.
+        /// </summary>
+        private bool FacesThreat(MiyakoCarryService.Client.Datas.McsBotPlayerData mcsData, Vector3 threat)
+        {
+            var fork = mcsData.Fork;
+            var now = Time.time;
+            if (now - fork.FacesThreatCheckedAt >= TeamModes.FACE_CHECK_INTERVAL)
+            {
+                fork.FacesThreatCheckedAt = now;
+                fork.FacesThreat = TeamModes.ShouldFaceThreat(mcsData.McsAILeadPlayer, BotOwner, threat);
+            }
+            return fork.FacesThreat;
         }
     }
 

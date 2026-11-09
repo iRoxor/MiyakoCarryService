@@ -4,8 +4,12 @@
 // McsGuardLayer, ForkCommands and ForkDebug call Get(); the first caller after
 // 0.2 s ticks the machine with the player's position and whether anyone in the
 // squad is engaged. ContactReports records contact reports (which also start
-// Guard at once) and the player's sightings; the guards look at the freshest of
-// the engagement threat, the report and the sighting. It also owns each squad's
+// Guard at once) and the player's sightings; HeardWatch records places where a
+// carry bot heard an unseen enemy, and while the squad follows, raises an alert
+// that works like a short contact report (AlertHeard; fork v8). The guards look at
+// the freshest of the engagement threat, the report, the sighting and the heard
+// place, each guard only when its sector covers it (ShouldFaceThreat; fork v7
+// turned every guard toward it). It also owns each squad's
 // guard plan (GuardPlanner): McsGuardLayer asks GetGuardPost for its bot's post,
 // and the plan is remade when the player has moved REPLAN_MOVE m, a contact
 // report arrives or expires, or the number of living bots changes. BrainMgr.
@@ -51,6 +55,18 @@ namespace MiyakoCarryService.Client.C2Sain
         /// <summary>Seconds a sighting handed over from the player's view stays a look target.</summary>
         private const float SIGHTING_MEMORY = 10f;
 
+        /// <summary>Seconds a place where a carry bot heard an unseen enemy stays a look target (fork v8).</summary>
+        private const float HEARD_MEMORY = 8f;
+
+        /// <summary>
+        /// Seconds an alert from a heard sound (HeardWatch, while following) stays the guards' focus,
+        /// shorter than a contact report's 30 s because nobody has seen the enemy.
+        /// </summary>
+        private const float HEARD_ALERT_MEMORY = 15f;
+
+        /// <summary>Seconds a guard keeps its answer to "should I face the squad's threat?" (ShouldFaceThreat is not free).</summary>
+        public const float FACE_CHECK_INTERVAL = 0.5f;
+
         /// <summary>Seconds after the player hits an identified enemy during which the player counts as engaged.</summary>
         private const float PLAYER_SHOT_WINDOW = 3f;
 
@@ -77,7 +93,12 @@ namespace MiyakoCarryService.Client.C2Sain
             public bool HasReport;
             public Vector3 ReportPosition;
             public float ReportTime = -999f;
+            public float ReportMemory = REPORT_MEMORY;
+            public bool ReportHeard;
             public int ReportId;
+            public bool HasHeard;
+            public Vector3 HeardPosition;
+            public float HeardTime = -999f;
             public bool HasSighting;
             public Vector3 SightingPosition;
             public float SightingTime = -999f;
@@ -102,6 +123,7 @@ namespace MiyakoCarryService.Client.C2Sain
         private static readonly List<V3> _botPoints = new();
         private static readonly List<V3> _postPoints = new();
         private static readonly List<GuardPost> _otherPosts = new();
+        private static readonly List<float> _offsets = new();
         private static readonly TeamModeSettings _settings = new();
         private static readonly DefendShuffleSettings _shiftSettings = new();
         private static McsMgr McsMgr => field ??= MgrAccessor.Get<McsMgr>();
@@ -118,8 +140,9 @@ namespace MiyakoCarryService.Client.C2Sain
 
         /// <summary>
         /// Where guards should look: the squad's current threat (the engaged bot's goal enemy, or the
-        /// player's attacker) if recent, else a contact report under 30 s old, else a sighting from the
-        /// player's view under 10 s old. False when none of them is recent.
+        /// player's attacker) if recent, else a contact report under 30 s old (15 s for an alert from a
+        /// heard sound), else a sighting from the player's view under 10 s old, else a place where a carry
+        /// bot heard an unseen enemy under 8 s old. False when none of them is recent.
         /// </summary>
         public static bool TryGetThreat(McsAILeadPlayer lead, out Vector3 position)
         {
@@ -130,7 +153,7 @@ namespace MiyakoCarryService.Client.C2Sain
                 position = entry.ThreatPosition;
                 return true;
             }
-            if (entry != null && entry.HasReport && now - entry.ReportTime <= REPORT_MEMORY)
+            if (entry != null && entry.HasReport && now - entry.ReportTime <= entry.ReportMemory)
             {
                 position = entry.ReportPosition;
                 return true;
@@ -138,6 +161,11 @@ namespace MiyakoCarryService.Client.C2Sain
             if (entry != null && entry.HasSighting && now - entry.SightingTime <= SIGHTING_MEMORY)
             {
                 position = entry.SightingPosition;
+                return true;
+            }
+            if (entry != null && entry.HasHeard && now - entry.HeardTime <= HEARD_MEMORY)
+            {
+                position = entry.HeardPosition;
                 return true;
             }
             position = default;
@@ -151,7 +179,7 @@ namespace MiyakoCarryService.Client.C2Sain
         public static bool TryGetReport(McsAILeadPlayer lead, out Vector3 position, out int reportId)
         {
             var entry = GetEntry(lead);
-            if (entry != null && entry.HasReport && Time.time - entry.ReportTime <= REPORT_MEMORY)
+            if (entry != null && entry.HasReport && Time.time - entry.ReportTime <= entry.ReportMemory)
             {
                 position = entry.ReportPosition;
                 reportId = entry.ReportId;
@@ -180,8 +208,91 @@ namespace MiyakoCarryService.Client.C2Sain
             entry.HasReport = true;
             entry.ReportPosition = mark;
             entry.ReportTime = Time.time;
+            entry.ReportMemory = REPORT_MEMORY;
+            entry.ReportHeard = false;
             entry.ReportId++;
             entry.Machine.StartGuard(new V3(playerPos.x, playerPos.y, playerPos.z), _settings);
+        }
+
+        /// <summary>
+        /// An alert from a heard, unseen enemy while the squad follows the player (HeardWatch): like a
+        /// contact report, Guard starts at the player with posts in cover facing the sound, but the focus
+        /// lasts HEARD_ALERT_MEMORY s. A live contact report from the player is never replaced. Returns
+        /// true when the alert was raised.
+        /// </summary>
+        /// <param name="lead">The player's MCS lead object.</param>
+        /// <param name="mark">Where the sound was heard.</param>
+        /// <param name="playerPos">The player's position, the Guard zone's centre.</param>
+        public static bool AlertHeard(McsAILeadPlayer lead, Vector3 mark, Vector3 playerPos)
+        {
+            var entry = GetEntry(lead);
+            if (entry == null || entry.Machine.Mode != TeamMode.C2)
+            {
+                return false;
+            }
+            if (entry.HasReport && !entry.ReportHeard && Time.time - entry.ReportTime <= entry.ReportMemory)
+            {
+                return false;
+            }
+            RefreshSettings();
+            entry.HasReport = true;
+            entry.ReportPosition = mark;
+            entry.ReportTime = Time.time;
+            entry.ReportMemory = HEARD_ALERT_MEMORY;
+            entry.ReportHeard = true;
+            entry.ReportId++;
+            entry.Machine.StartGuard(new V3(playerPos.x, playerPos.y, playerPos.z), _settings);
+            return true;
+        }
+
+        /// <summary>Records where a carry bot heard an unseen enemy, as a short-lived look target (HeardWatch).</summary>
+        public static void RecordHeard(McsAILeadPlayer lead, Vector3 position)
+        {
+            var entry = GetEntry(lead);
+            if (entry == null)
+            {
+                return;
+            }
+            entry.HasHeard = true;
+            entry.HeardPosition = position;
+            entry.HeardTime = Time.time;
+        }
+
+        /// <summary>
+        /// Whether this guard should turn toward the squad's threat: only guards whose watch direction
+        /// (BotForkState.GuardOutward) is within ThreatSectors.DEFAULT_HALF_WIDTH degrees of the threat,
+        /// or the closest one when no guard's is (Core/Hearing.cs, ThreatSectors). Fork v7 turned every
+        /// guard toward it. Callers cache the answer for FACE_CHECK_INTERVAL s.
+        /// </summary>
+        /// <param name="lead">The player's MCS lead object.</param>
+        /// <param name="bot">The guard asking.</param>
+        /// <param name="threat">The threat's position (TryGetThreat).</param>
+        public static bool ShouldFaceThreat(McsAILeadPlayer lead, BotOwner bot, Vector3 threat)
+        {
+            var player = lead?.McsLeadPlayer;
+            if (player == null || bot == null)
+            {
+                return true;
+            }
+            FillMembers(player);
+            _offsets.Clear();
+            var me = -1;
+            foreach (var member in _members)
+            {
+                var watch = member.GetMcsBotPlayerData()?.Fork.GuardOutward ?? Vector3.zero;
+                if (watch.sqrMagnitude < 0.01f)
+                {
+                    watch = member.LookDirection;
+                }
+                var toThreat = threat - member.Position;
+                if (member.ProfileId == bot.ProfileId)
+                {
+                    me = _offsets.Count;
+                }
+                _offsets.Add(GuardFormation.AngleBetween(GuardFormation.YawOf(watch.x, watch.z), GuardFormation.YawOf(toThreat.x, toThreat.z)));
+            }
+            _members.Clear();
+            return me < 0 || ThreatSectors.ShouldFace(_offsets, me, ThreatSectors.DEFAULT_HALF_WIDTH);
         }
 
         /// <summary>
@@ -263,7 +374,7 @@ namespace MiyakoCarryService.Client.C2Sain
             if (plan == null || plan.ReportId != reportId || plan.BotCount != _members.Count
                 || Vector3.Distance(plan.Anchor, player.Position) > DEFEND_REPLAN_MOVE)
             {
-                plan = entry.DefendPlan = MakeDefendPlan(player, threat, reportId);
+                plan = entry.DefendPlan = MakeDefendPlan(player, threat, reportId, threat.HasValue && entry.ReportHeard);
                 foreach (var member in _members)
                 {
                     member.GetMcsBotPlayerData()?.Fork.DefendShift.Reset();
@@ -309,13 +420,13 @@ namespace MiyakoCarryService.Client.C2Sain
         /// walk shortest (GuardFormation.Assign). Logs the plan when debug logging is on, in the guard
         /// plan's format with the header "defend plan for".
         /// </summary>
-        private static GuardPlanState MakeDefendPlan(Player player, Vector3? threat, int reportId)
+        private static GuardPlanState MakeDefendPlan(Player player, Vector3? threat, int reportId, bool heard)
         {
             var state = new GuardPlanState { Anchor = player.Position, ReportId = reportId, BotCount = _members.Count };
             var indoors = IsIndoors(player);
             var posts = GuardPlanner.PlanDefend(player.Position, player.LookDirection, _members.Count, threat, indoors);
             AssignPosts(posts, state);
-            LogPlan("defend plan", player, indoors, posts, threat, state);
+            LogPlan("defend plan", player, indoors, posts, threat, heard, state);
             return state;
         }
 
@@ -361,7 +472,7 @@ namespace MiyakoCarryService.Client.C2Sain
             if (plan == null || plan.ReportId != reportId || plan.BotCount != _members.Count
                 || Vector3.Distance(plan.Anchor, player.Position) > REPLAN_MOVE)
             {
-                plan = entry.Plan = MakePlan(player, threat, reportId);
+                plan = entry.Plan = MakePlan(player, threat, reportId, threat.HasValue && entry.ReportHeard);
             }
             _members.Clear();
             return plan.Posts.TryGetValue(bot.ProfileId, out var post) ? post : null;
@@ -371,7 +482,7 @@ namespace MiyakoCarryService.Client.C2Sain
         /// Plans posts for the bots in _members and gives each the post that keeps the squad's total walk
         /// shortest (GuardFormation.Assign). Logs the plan when debug logging is on.
         /// </summary>
-        private static GuardPlanState MakePlan(Player player, Vector3? threat, int reportId)
+        private static GuardPlanState MakePlan(Player player, Vector3? threat, int reportId, bool heard)
         {
             var state = new GuardPlanState { Anchor = player.Position, ReportId = reportId, BotCount = _members.Count };
             var indoors = IsIndoors(player);
@@ -379,7 +490,7 @@ namespace MiyakoCarryService.Client.C2Sain
             var maxRange = Mathf.Max(minRange + 1f, ForkConfig.GuardPostMax?.Value ?? 12f);
             var posts = GuardPlanner.Plan(player.Position, player.LookDirection, _members.Count, threat, indoors, minRange, maxRange);
             AssignPosts(posts, state);
-            LogPlan("guard plan", player, indoors, posts, threat, state);
+            LogPlan("guard plan", player, indoors, posts, threat, heard, state);
             return state;
         }
 
@@ -423,16 +534,17 @@ namespace MiyakoCarryService.Client.C2Sain
 
         /// <summary>
         /// Logs a plan when debug logging is on: a header ("guard plan for" or "defend plan for" the
-        /// player, indoors or outdoors, posts per bots) and one line per bot (GuardPlanner.DescribePost).
+        /// player, indoors or outdoors, posts per bots, and "facing a contact report" or "facing a heard sound"
+        /// when the plan faces one) and one line per bot (GuardPlanner.DescribePost).
         /// </summary>
-        private static void LogPlan(string what, Player player, bool indoors, List<GuardPost> posts, Vector3? threat, GuardPlanState state)
+        private static void LogPlan(string what, Player player, bool indoors, List<GuardPost> posts, Vector3? threat, bool heard, GuardPlanState state)
         {
             if (ForkConfig.DebugLog?.Value != true)
             {
                 return;
             }
             McsLogger.LogInfo($"[{ForkLog.Tag}] {what} for {player.Profile?.Nickname}: {(indoors ? "indoors" : "outdoors")}, "
-                + $"{posts.Count} post(s) for {_members.Count} bot(s){(threat.HasValue ? ", facing a contact report" : "")}");
+                + $"{posts.Count} post(s) for {_members.Count} bot(s){(threat.HasValue ? (heard ? ", facing a heard sound" : ", facing a contact report") : "")}");
             foreach (var member in _members)
             {
                 state.Posts.TryGetValue(member.ProfileId, out var post);

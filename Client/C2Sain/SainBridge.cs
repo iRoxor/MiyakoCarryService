@@ -88,6 +88,35 @@ namespace MiyakoCarryService.Client.C2Sain
             return known.HasValue;
         }
 
+        /// <summary>
+        /// Where this bot itself most recently heard an enemy it cannot see, within the last
+        /// <paramref name="maxAgeSeconds"/> (SAIN's EnemyHearing.LastHeardPosition). False when none.
+        /// Fork v8: the guard logics turn toward it before anything the squad shares.
+        /// </summary>
+        public static bool TryGetOwnHeard(BotComponent bot, float maxAgeSeconds, out UnityEngine.Vector3 position)
+        {
+            position = default;
+            var found = false;
+            var newest = maxAgeSeconds;
+            var enemies = bot?.EnemyController?.Enemies;
+            if (enemies == null)
+            {
+                return false;
+            }
+            foreach (var enemy in enemies.Values)
+            {
+                var hearing = enemy?.Hearing;
+                if (hearing == null || enemy.IsVisible || !hearing.Heard || !hearing.LastHeardPosition.HasValue || hearing.TimeSinceHeard > newest)
+                {
+                    continue;
+                }
+                newest = hearing.TimeSinceHeard;
+                position = hearing.LastHeardPosition.Value;
+                found = true;
+            }
+            return found;
+        }
+
         /// <summary>Number of enemies SAIN currently counts as known for this bot.</summary>
         public static int CountKnownEnemies(BotComponent bot)
         {

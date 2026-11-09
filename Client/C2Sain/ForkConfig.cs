@@ -70,6 +70,10 @@ namespace MiyakoCarryService.Client.C2Sain
         public static ConfigEntry<bool> OutOfCombatStims;
         public static ConfigEntry<bool> GapCrossing;
         public static ConfigEntry<bool> McsFastDoors;
+        public static ConfigEntry<bool> HearFootsteps;
+        public static ConfigEntry<float> GunshotHearingRange;
+        public static ConfigEntry<float> FollowFootstepRange;
+        public static ConfigEntry<bool> SayIHearSomething;
         public static ConfigEntry<bool> DebugLog;
 
         /// <summary>
@@ -106,6 +110,10 @@ namespace MiyakoCarryService.Client.C2Sain
             OutOfCombatStims = Bool(plugin, "OutOfCombatStims", false);
             GapCrossing = Bool(plugin, "GapCrossing", false);
             McsFastDoors = Bool(plugin, "McsFastDoors", false);
+            HearFootsteps = Bool(plugin, "HearFootsteps", true);
+            GunshotHearingRange = Float(plugin, "GunshotRange", 25f, 0f, 300f);
+            FollowFootstepRange = Float(plugin, "FollowFootstepRange", 30f, 0f, 70f);
+            SayIHearSomething = Bool(plugin, "SayIHearSomething", true);
             DebugLog = Bool(plugin, "DebugLog", false);
         }
 

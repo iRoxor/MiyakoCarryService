@@ -45,6 +45,7 @@ namespace MiyakoCarryService.Client.Mgrs
             StartCoroutine(ReloadDataLoop(1f, LoadItemData<PlayerData>));
             StartCoroutine(RecordAgentInfo(1f));
             StartCoroutine(RecordBrainTimeline(0.25f)); // Fork: the diagnostic log's brain timeline (C2Sain/BrainWatch)
+            StartCoroutine(FeedFootsteps(0.25f)); // Fork v8: AI footsteps for carry bots (C2Sain/FootstepFeed)
             StartCoroutine(UpdateItemData(1f));
             StartCoroutine(RefreshMcsBotPlayersInterestingLoop(10f));
             StartCoroutine(CheckMcsLeadPlayerSeenEnemiesLoop(1f));
@@ -117,6 +118,23 @@ namespace MiyakoCarryService.Client.Mgrs
         /// reason to C2Sain/BrainWatch, which logs the changes (and deaths) when "Debug: diagnostic log"
         /// is on. Each bot is read inside its own try, so one bot's fault cannot end the loop.
         /// </summary>
+        /// <summary>
+        /// Fork v8: every <paramref name="time"/> seconds, while "Hearing: AI footsteps" is on, lets
+        /// C2Sain/FootstepFeed hand AI enemies' footsteps to the carry bots (it catches its own errors).
+        /// </summary>
+        private IEnumerator FeedFootsteps(float time)
+        {
+            var waitTime = new WaitForSeconds(time);
+            while (true)
+            {
+                yield return waitTime;
+                if (Gameloop.IsVaildGameWorld && C2Sain.ForkConfig.HearFootsteps?.Value == true)
+                {
+                    C2Sain.FootstepFeed.Tick(GetMcsBotPlayerDatas());
+                }
+            }
+        }
+
         private IEnumerator RecordBrainTimeline(float time)
         {
             var waitTime = new WaitForSeconds(time);

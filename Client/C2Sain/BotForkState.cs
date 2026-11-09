@@ -57,6 +57,13 @@ namespace MiyakoCarryService.Client.C2Sain
         public float LookSourceTime = -999f;
 
         /// <summary>
+        /// GuardWatchLogic's cached answer to "does my sector cover the squad's threat?"
+        /// (TeamModes.ShouldFaceThreat) and when it was worked out (Time.time). Fork v8.
+        /// </summary>
+        public bool FacesThreat = true;
+        public float FacesThreatCheckedAt = -999f;
+
+        /// <summary>
         /// LookSource for a diagnostic line, or "not steered by the guard layer" when the guard logics
         /// have not run in the last second (another layer, such as SAIN's, is turning the head).
         /// </summary>

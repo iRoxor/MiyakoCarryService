@@ -167,10 +167,53 @@ namespace MiyakoCarryService.Client.C2Sain
         ///      summary's brain timeline) mean the look fixes fell short of v6's quarter;
         ///    - bots leaving their posts early (an arrival line far more than 1.25 m from the spot while
         ///      the path was clear) sends the 3 m radius back.
+        ///    Correction (2026-11-08): Raid Review's "dir" equals its "bodyYaw" in every sample (about
+        ///    290,000 checked), so the export figures above are BODY facing, not where the head looked:
+        ///    "kept head and body at 198.0 deg" was the body only, and the 25% baseline is a body-facing
+        ///    share. The fork's own frozen-view lines read the real view direction. The third falsifier
+        ///    is read with the fork's lines instead (see v8).
+        ///  8 (2026-11-08) Test build 8: hearing, from the plan's phase 3 and the user's 12 raids with v7
+        ///    (11-05 to 11-08; evidence in miyako-carry-service/evidence/2026-11-08-build-7-raids).
+        ///    v7 measured, from the fork's own view lines in the 4 raids that kept a log: the scan never
+        ///    froze, and no v7 falsifier fired (the one 14 s walking stare was 15 m from its spot, a
+        ///    creep, not a stall). What still stared: upstream Hold Position (285 s in the 11-05 Woods
+        ///    raid, one run 167 s), and the whole squad facing one threat point (301 s, runs of 20-28 s,
+        ///    every guard toward the same spot). Body-facing share in the exports: 25.2% (v6) to 9.4%.
+        ///    Changed:
+        ///    - AI footsteps: SAIN makes none for AI players, so the fork makes them (FootstepFeed,
+        ///      Core/Hearing.cs FootstepCadence) and hands them to carry bots only; SAIN decides per bot
+        ///      whether each is heard. While following, only steps within 30 m are handed over.
+        ///    - Gunshots beyond 25 m are not heard by carry bots (SainGunshotRangePatch), so a distant
+        ///      fight does not pull them away; bullets near them still count.
+        ///    - A heard, unseen enemy (SainHeardPatch, HeardWatch): the bot that heard it turns to it; the
+        ///      place is a squad look target for 8 s; while following, the squad halts in Guard with
+        ///      posts in cover facing the sound for 15 s (TeamModes.AlertHeard); "I hear something."
+        ///      once per 20 s per squad, never in Combat. Chasing heard-only enemies stays vetoed.
+        ///    - Only guards whose sector covers a threat face it; the closest faces it when none does
+        ///      (Core/Hearing.cs ThreatSectors, 80 degrees either side).
+        ///    - The frozen-view end line names the ended run's direction (FrozenViewTracker.EndedRunYaw);
+        ///      v7 printed the next run's.
+        ///    Diagnostics: a "heard:" line per heard enemy (rate-limited), and plan headers say "facing
+        ///    a heard sound" for an alert. Settings: Hearing: AI footsteps / gunshot range / footsteps
+        ///    while following / say "I hear something.".
+        ///    Pooling: guard plans, open-ground and frozen-view numbers stay comparable with v7, except
+        ///    that hearing now starts alerts and threat looks that v7 never had: compare raids, do not
+        ///    add v7 and v8 frozen-view seconds together. Gunshot-driven reactions beyond 25 m drop by
+        ///    design.
+        ///    Falsifiers, from raids with the diagnostic log on:
+        ///    - no "heard:" line in a raid where AI enemies came within 30 m of the squad unseen, or the
+        ///      user hearing footsteps the bots ignored, sends the footstep feed back;
+        ///    - the squad stopping more than about once a minute while following with no enemy found, or
+        ///      the user calling the halts annoying, sends the follow alert back (or its range down);
+        ///    - a frozen view facing the squad's threat that lasts 20 s or more with every living guard
+        ///      facing it at once, sends the sector rule back;
+        ///    - a carry bot killed from behind by an enemy it had heard (a "heard:" line for that enemy
+        ///      within 10 s before the death) means the turn toward heard enemies is too slow or too
+        ///      short.
         /// </summary>
-        public const int ForkVersion = 7;
+        public const int ForkVersion = 8;
 
         /// <summary>Short label used in logs and the overlay.</summary>
-        public const string Label = "C2/SAIN fork v7";
+        public const string Label = "C2/SAIN fork v8";
     }
 }

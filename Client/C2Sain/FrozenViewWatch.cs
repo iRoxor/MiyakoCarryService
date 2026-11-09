@@ -99,7 +99,7 @@ namespace MiyakoCarryService.Client.C2Sain
                         FrozenViewEnd.Exempt => "started aiming at an enemy",
                         _ => "stopped being sampled",
                     };
-                    McsLogger.LogInfo($"[{ForkLog.Tag}] frozen view: {player.Profile?.Nickname} {how} after {tracker.RunSeconds:0} s looking at {tracker.RunYaw:0} deg (now {layer}, {reason})");
+                    McsLogger.LogInfo($"[{ForkLog.Tag}] frozen view: {player.Profile?.Nickname} {how} after {tracker.RunSeconds:0} s looking at {tracker.EndedRunYaw:0} deg (now {layer}, {reason})");
                 }
             }
             catch (Exception e)

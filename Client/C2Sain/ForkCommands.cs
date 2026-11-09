@@ -29,6 +29,7 @@ namespace MiyakoCarryService.Client.C2Sain
             (EPhraseTrigger.Gogogo, 143f),
             (EPhraseTrigger.Covering, 144f),
             (EPhraseTrigger.LostVisual, 145f),
+            (EPhraseTrigger.NoisePhrase, 146f),
         };
 
         /// <summary>Engage Enemy: see EngageTactics. Refused ("Negative, no contact.") without a known enemy.</summary>

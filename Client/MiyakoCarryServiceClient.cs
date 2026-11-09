@@ -258,6 +258,8 @@ namespace MiyakoCarryService.Client
             _patches.Add(new FindDamagedPartPatch());
             _patches.Add(new C2Sain.Patches.SainSetDecisionsPatch());
             _patches.Add(new C2Sain.Patches.SainFoliageSightPatch()); // Fork: carry bots see out of their bush.
+            _patches.Add(new C2Sain.Patches.SainGunshotRangePatch()); // Fork v8: carry bots ignore distant gunshots.
+            _patches.Add(new C2Sain.Patches.SainHeardPatch()); // Fork v8: a carry bot hearing an enemy alerts the squad.
 
             if (FikaInstalled)
             {

@@ -71,8 +71,17 @@ namespace MiyakoCarryService.Client.C2Sain
             ["McsFork/GapCrossing Description"] = "Upstream MCS's shortcuts: vaulting through windows and over walls, dropping off ledges, and warping onto the navmesh. Default off. This is what made bots clip into walls and unreachable spots.",
             ["McsFork/McsFastDoors Key"] = "Movement: MCS fast doors",
             ["McsFork/McsFastDoors Description"] = "Upstream MCS's own door handling, which opens doors instantly and ignores the game's rule on which doors may be opened. Default off: the game's and SAIN's door handling are used instead.",
+            ["McsFork/HearFootsteps Key"] = "Hearing: AI footsteps",
+            ["McsFork/HearFootsteps Description"] = "Let carry bots hear AI enemies walking and sprinting. SAIN makes footstep sounds only for human players, so without this no carry bot hears an AI enemy move. SAIN still decides each time whether a step is heard: walls, distance, headphones. Only carry bots hear the steps; other bots are unchanged. Default on.",
+            ["McsFork/GunshotRange Key"] = "Hearing: gunshot range (m)",
+            ["McsFork/GunshotRange Description"] = "Carry bots ignore gunshots farther away than this, so a distant fight does not pull them off you. Bullets passing or hitting near them still count as being shot at. Default 25. 0 = hear gunshots as far as SAIN allows.",
+            ["McsFork/FollowFootstepRange Key"] = "Hearing: footsteps while following (m)",
+            ["McsFork/FollowFootstepRange Description"] = "While the bots follow you, they react only to footsteps within this distance. A heard enemy makes the squad stop, take cover facing the sound, and say \"I hear something.\" Default 30. Higher alerts on farther footsteps but stops the squad more often; 0 = no limit.",
+            ["McsFork/SayIHearSomething Key"] = "Hearing: say \"I hear something.\"",
+            ["McsFork/SayIHearSomething Description"] = "A carry bot that hears an enemy it has not seen says so, at most once every 20 s per squad, and not during a fight. Default on.",
+            ["McsFork/IHearSomething"] = "I hear something.",
             ["McsFork/DebugLog Key"] = "Debug: diagnostic log",
-            ["McsFork/DebugLog Description"] = "Write what the carry bots decide to BepInEx\\LogOutput.log, each line stamped with the raid clock (minutes:seconds since the raid started, the same clock Raid Review uses): every change of each bot's brain layer and SAIN's decision, squad mode changes, cut chases, contact reports, Engage orders, personality re-rolls, every guard and Defend plan with each bot's spot and its cover, bots stopping short of their spot, any bot that has stood still in the open for 5 s or kept looking the same way for 8 s, deaths, and each item a bot goes to loot by itself. Several hundred lines a raid. Turn it on when you want to report a problem. Default off.",
+            ["McsFork/DebugLog Description"] = "Write what the carry bots decide to BepInEx\\LogOutput.log, each line stamped with the raid clock (minutes:seconds since the raid started, the same clock Raid Review uses): every change of each bot's brain layer and SAIN's decision, squad mode changes, cut chases, contact reports, Engage orders, personality re-rolls, every guard and Defend plan with each bot's spot and its cover, bots stopping short of their spot, any bot that has stood still in the open for 5 s or kept looking the same way for 8 s, each enemy a bot heard but could not see, deaths, and each item a bot goes to loot by itself. Several hundred lines a raid. Turn it on when you want to report a problem. Default off.",
 
             // Commands.
             ["McsFork/BreakOff Name"] = "Break off from combat",

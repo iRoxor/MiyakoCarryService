@@ -210,10 +210,54 @@ namespace MiyakoCarryService.Client.C2Sain
         ///    - a carry bot killed from behind by an enemy it had heard (a "heard:" line for that enemy
         ///      within 10 s before the death) means the turn toward heard enemies is too slow or too
         ///      short.
+        ///    Result (2026-11-09, two Lighthouse raids; evidence/2026-11-09-build-8-lighthouse and
+        ///    -lighthouse-2): 78 "heard:" lines, 9 of them footsteps at 8-18 m, which SAIN never makes
+        ///    for AI, so the feed works end to end. No falsifier fired: no halts while following (every
+        ///    footstep came in Guard, Defend or Combat), and the four carry-bot deaths were a 52 m
+        ///    headshot and three grenades, none a shot in the back after a heard warning.
+        ///  9 (2026-11-09) Test build 9: the indoor planner (GuardPlanner.TryApproachPosts,
+        ///    Core/IndoorApproaches.cs), the user's HIGH priority from 2026-11-08.
+        ///    Measured before it, from the indoor guard plans in the build 7 and 8 logs (evidence/
+        ///    2026-11-08-build-7-raids, 2026-11-09-build-8-lighthouse-2): 86 of 317 bot places (27%)
+        ///    got no post (v7 67 of 207, v8 19 of 110), so those bots just followed; the lone bot got no
+        ///    post in 41 of 65 indoor plans (v7); and 105 of 173 approach posts had no cover.
+        ///    Cause: an approach was the point 6 m along each route, usually past the doorway, so routes
+        ///    through one door split into several approaches, and posts were searched on the straight
+        ///    line toward that point, often through a wall.
+        ///    Changed:
+        ///    - Each route is walked in 0.75 m steps to where it leaves the player's space (out of the
+        ///      player's navmesh line and line of sight, or more than 1.5 m up or down) and stays out for
+        ///      2 m, then moved back to its narrowest point within 4 m when that is 1.8 m wide or less
+        ///      (the doorway). Approaches are classed doorway, hallway, stairs or opening.
+        ///    - A room where 60% of routes stay in view is open: the even detail is used, as outdoors.
+        ///    - Guards go to the busiest approaches, an approach the player looks at counting half; a
+        ///      spare bot doubles the busiest approach from the other side before a minor approach
+        ///      (under 15% of routes) gets one.
+        ///    - A post is 1.5-6 m from its approach on the room's side, beside the opening (20-55
+        ///      degrees off its axis scores best), with a view of it at crouched eye height, not
+        ///      through the player, and preferring cover and a wall beside it. It watches the opening.
+        ///    - The lone bot indoors uses the same plan (the approach the player is not watching);
+        ///      the old back-watching spot is the fallback.
+        ///    Diagnostics: after each indoor guard plan, an "indoor approaches:" line with routes
+        ///    traced, left and stayed in view, each approach (kind, routes, distance, bearing, guarded,
+        ///    or why not with the failure counts), any fallback, and the time taken. The summary tool
+        ///    prints these from v9.
+        ///    Pooling: outdoor plans are unchanged and pool with v8. Indoor post counts do not pool
+        ///    with v8 for kinds: lone bots indoors now report "approach" posts, not "solo". Indoor
+        ///    no-post and open-ground rates compare across the boundary but must not be added together.
+        ///    Falsifiers, from raids with the diagnostic log on:
+        ///    - bots without a post in indoor guard plans at 14% or more of bot places (half of v7-v8's
+        ///      27%) sends the route walk back;
+        ///    - "using the even detail" in more than half of the indoor plans means the room test or
+        ///      the exit rule is wrong;
+        ///    - a median plan time above 30 ms, or the user noticing a hitch when the squad settles
+        ///      indoors, sends MAX_ROUTES or the sampling down;
+        ///    - the user seeing guards posted in the next room, facing a wall, or standing in a doorway
+        ///      rather than beside it, sends the post scoring back.
         /// </summary>
-        public const int ForkVersion = 8;
+        public const int ForkVersion = 9;
 
         /// <summary>Short label used in logs and the overlay.</summary>
-        public const string Label = "C2/SAIN fork v8";
+        public const string Label = "C2/SAIN fork v9";
     }
 }

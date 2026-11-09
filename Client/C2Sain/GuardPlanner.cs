@@ -8,11 +8,14 @@
 //
 // Plans, in order:
 //   contact report -- posts fanned out facing the mark (GuardFormation.FanYaws), as in fork v2;
+//   indoors        -- posts on the approaches (doorways, hallways, stairwells) where navmesh routes
+//                     leave the player's space (fork v9: IndoorApproaches), beside each opening with
+//                     a view of it; a second guard on the busiest approaches before the minor ones;
+//                     spare bots fill the widest gaps. Since fork v9 a lone bot tries this too.
+//                     Falls back to the plans below when the room is open or no approach got a post;
 //   one bot        -- one post watching the player's back;
-//   indoors        -- one post per approach (doorway, hallway, stairwell), busiest first, on the
-//                     player's side of it with a view down it; spare bots fill the widest gaps.
-//                     Falls back to the detail when no approach is found;
 //   otherwise      -- the detail: posts evenly spaced around the player (GuardFormation.EvenYaws).
+// The indoor plan's diagnostic line is LastIndoorReport, logged by TeamModes.LogPlan.
 // Defend Me has its own plan (PlanDefend): one spot per bot DEFEND_MIN-DEFEND_MAX m from the player,
 // each in its own sector, and a bot shifting position takes another spot in the same sector
 // (ShiftDefend). TeamModes calls both.
@@ -32,6 +35,7 @@
 // player looks, or of the reported enemy for a post facing a contact report.
 
 using System.Collections.Generic;
+using System.Text;
 using MiyakoCarryService.Client.C2Sain.Core;
 using MiyakoCarryService.Client.Utils;
 using UnityEngine;
@@ -73,11 +77,30 @@ namespace MiyakoCarryService.Client.C2Sain
         /// <summary>Largest object footprint (m) treated as one object; buildings and terrain are left to the sampling.</summary>
         private const float OBJECT_MAX_WIDTH = 8f;
 
-        /// <summary>Metres along a route at which it counts as leaving the player's surroundings indoors.</summary>
-        private const float EXIT_DISTANCE = 6f;
+        /// <summary>
+        /// Metres of route walked looking for where it leaves the player's space (plus OutRun); a route
+        /// still in view after that counts as staying in view. Until fork v8 every route "left" at a fixed
+        /// 6 m (EXIT_DISTANCE), and its direction came from the point 10 m along (BEYOND_DISTANCE).
+        /// </summary>
+        private const float EXIT_SCAN_MAX = 15f;
 
-        /// <summary>Metres along a route used to tell which way an approach leads.</summary>
-        private const float BEYOND_DISTANCE = 10f;
+        /// <summary>Metres past the approach point used to tell which way the approach leads and whether it climbs.</summary>
+        private const float BEYOND_PAST_APPROACH = 3f;
+
+        /// <summary>The player's eye height (m) for the line of sight that keeps a route in the player's space.</summary>
+        private const float EYE_HEIGHT = 1.4f;
+
+        /// <summary>Height (m) above a route point that the player's line of sight aims at: above most tables and counters.</summary>
+        private const float CHEST_HEIGHT = 1.2f;
+
+        /// <summary>Eye height (m) of a crouched bot, for a post's view of its approach (bots crouch at every post since fork v5).</summary>
+        private const float CROUCHED_EYE = 1.0f;
+
+        /// <summary>Largest height difference (m) from the player within the player's space; C2Nav.IsInPlayersSpace uses the same.</summary>
+        private const float MAX_HEIGHT_FOR_SPACE = 1.5f;
+
+        /// <summary>Farthest (m) each side a route's width is probed.</summary>
+        private const float WIDTH_PROBE = 3f;
 
         /// <summary>Route destinations: this far away horizontally (m), and at most this far up or down.</summary>
         private const float DESTINATION_MIN = 12f;
@@ -121,6 +144,18 @@ namespace MiyakoCarryService.Client.C2Sain
         private static readonly List<GuardPost> _sectorPosts = new();
         private static readonly List<bool?> _sectorResults = new();
         private static readonly GuardFormationSettings _formation = new();
+        private static readonly IndoorPlanSettings _indoor = new();
+        private static readonly List<Vector3> _samples = new();
+        private static readonly List<bool> _inSpace = new();
+        private static readonly List<float> _widths = new();
+        private static readonly List<float> _exitWidths = new();
+
+        /// <summary>
+        /// One line on the last indoor approach plan (routes, approaches, which got guards and why not,
+        /// time taken), or null when the last Plan call did not try approaches. Written by Plan; read by
+        /// TeamModes.LogPlan for the diagnostic log.
+        /// </summary>
+        internal static string LastIndoorReport;
 
         /// <summary>
         /// Plans posts for a squad of <paramref name="botCount"/> bots. Returns up to that many posts;
@@ -136,6 +171,7 @@ namespace MiyakoCarryService.Client.C2Sain
         public static List<GuardPost> Plan(Vector3 player, Vector3 look, int botCount, Vector3? threat, bool indoors, float minRange, float maxRange)
         {
             var posts = new List<GuardPost>();
+            LastIndoorReport = null;
             if (botCount <= 0)
             {
                 return posts;
@@ -160,17 +196,17 @@ namespace MiyakoCarryService.Client.C2Sain
                 return posts;
             }
 
-            if (botCount == 1)
-            {
-                AddIfFound(posts, BestSpot(player, GuardFormation.SoloYaw(lookYaw), 90f, minRange, maxRange, null, indoors, posts, "solo", lineYaw: lookYaw));
-                return posts;
-            }
-
             if (indoors && TryApproachPosts(player, lookYaw, botCount, minRange, maxRange, posts))
             {
                 return posts;
             }
             posts.Clear();
+
+            if (botCount == 1)
+            {
+                AddIfFound(posts, BestSpot(player, GuardFormation.SoloYaw(lookYaw), 90f, minRange, maxRange, null, indoors, posts, "solo", lineYaw: lookYaw));
+                return posts;
+            }
 
             foreach (var yaw in GuardFormation.EvenYaws(botCount, lookYaw))
             {
@@ -369,20 +405,39 @@ namespace MiyakoCarryService.Client.C2Sain
         }
 
         /// <summary>
-        /// Indoors: traces navmesh routes from the player to points 12-35 m away (other floors included),
-        /// groups the points where they leave the player's surroundings into approaches, and posts one bot
-        /// per approach, busiest first; spare bots take the widest gaps. Returns false (posts untouched)
-        /// when too few routes or no usable approach post were found.
+        /// Indoors (fork v9): traces navmesh routes from the player to points 12-35 m away (other floors
+        /// included) and walks each one (WalkRoute) to where it leaves the player's space, moved back to
+        /// the narrowest point just before it (IndoorApproaches.ApproachPoint: the doorway). Those points
+        /// group into approaches (GuardFormation.ClusterExits), IndoorApproaches.GuardOrder decides which
+        /// approaches get guards (a second guard on the busiest ones before the minor ones), and
+        /// ApproachPost finds each guard a spot beside the opening with a view of it. Spare bots take the
+        /// widest gaps. Returns false (posts untouched) when there are too few routes, the room is open
+        /// (most routes stay in view), or no approach got a post; the caller then uses the even detail or
+        /// the solo post. Sets LastIndoorReport either way. Runs up to MAX_ROUTES path queries plus
+        /// navmesh and physics casts along each route; the report gives the time it took.
         /// </summary>
         private static bool TryApproachPosts(Vector3 player, float lookYaw, int botCount, float minRange, float maxRange, List<GuardPost> posts)
         {
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            var report = new StringBuilder("indoor approaches: ");
+            var result = TraceApproaches(player, lookYaw, botCount, minRange, maxRange, posts, report);
+            report.Append($"; {clock.Elapsed.TotalMilliseconds:0} ms");
+            LastIndoorReport = report.ToString();
+            return result;
+        }
+
+        /// <summary>TryApproachPosts' work; writes what it found and decided to <paramref name="report"/>.</summary>
+        private static bool TraceApproaches(Vector3 player, float lookYaw, int botCount, float minRange, float maxRange, List<GuardPost> posts, StringBuilder report)
+        {
             if (!NavMesh.SamplePosition(player, out var start, 1.5f, NavMesh.AllAreas))
             {
+                report.Append("you are off the navmesh, using the even detail");
                 return false;
             }
             var vertices = CommandUtils.GetNavMeshVertices();
             if (vertices == null || vertices.Length == 0)
             {
+                report.Append("no navmesh triangulation, using the even detail");
                 return false;
             }
 
@@ -406,49 +461,107 @@ namespace MiyakoCarryService.Client.C2Sain
 
             _exits.Clear();
             _beyond.Clear();
+            _exitWidths.Clear();
             var path = new NavMeshPath();
+            var eye = player + Vector3.up * EYE_HEIGHT;
             var stride = Mathf.Max(1, _destinations.Count / MAX_ROUTES);
-            for (var i = 0; i < _destinations.Count && _exits.Count < MAX_ROUTES; i += stride)
+            int traced = 0, stayed = 0;
+            for (var i = 0; i < _destinations.Count && traced < MAX_ROUTES; i += stride)
             {
                 if (!NavMesh.CalculatePath(start.position, _destinations[i], NavMesh.AllAreas, path) || path.status != NavMeshPathStatus.PathComplete)
                 {
                     continue;
                 }
+                traced++;
                 var corners = path.corners;
-                if (!PointAlong(start.position, corners, EXIT_DISTANCE, out var exit) || !PointAlong(start.position, corners, BEYOND_DISTANCE, out var beyond))
+                WalkRoute(start.position, eye, player.y, corners);
+                var exit = IndoorApproaches.FindExit(_inSpace, _indoor);
+                if (exit < 0)
                 {
+                    stayed++;
                     continue;
                 }
-                _exits.Add(new V3(exit.x, exit.y, exit.z));
+                _widths.Clear();
+                var lookBack = Mathf.FloorToInt(_indoor.DoorLookBack / _indoor.SampleStep + 1e-4f);
+                for (var s = 0; s < _samples.Count; s++)
+                {
+                    _widths.Add(s >= 1 && s <= exit && s >= exit - lookBack ? WidthAt(s) : float.NaN);
+                }
+                var point = IndoorApproaches.ApproachPoint(_widths, exit, _indoor);
+                var at = _samples[point];
+                if (!PointAlong(start.position, corners, point * _indoor.SampleStep + BEYOND_PAST_APPROACH, out var beyond))
+                {
+                    beyond = corners[corners.Length - 1];
+                }
+                _exits.Add(new V3(at.x, at.y, at.z));
                 _beyond.Add(beyond);
+                _exitWidths.Add(float.IsNaN(_widths[point]) ? WidthAt(point) : _widths[point]);
             }
-            if (_exits.Count < MIN_ROUTES)
+            var left = _exits.Count;
+            report.Append($"{traced} route(s) traced, {left} left your space, {stayed} stayed in view");
+            if (traced < MIN_ROUTES || left == 0)
             {
+                report.Append(left == 0 && traced >= MIN_ROUTES ? "; no way out found" : "; too few routes").Append(", using the even detail");
+                return false;
+            }
+            if (IndoorApproaches.IsOpenRoom(traced, stayed, _indoor))
+            {
+                report.Append("; an open room, using the even detail");
                 return false;
             }
 
-            var approaches = GuardFormation.ClusterExits(_exits, new V3(player.x, player.y, player.z), _formation);
+            var playerV3 = new V3(player.x, player.y, player.z);
+            var approaches = GuardFormation.ClusterExits(_exits, playerV3, _formation);
+            // The whole ranked list, not just botCount entries, so a bot whose approach offers no spot
+            // tries the next one in rank instead of going straight to a gap.
+            var order = IndoorApproaches.GuardOrder(approaches, lookYaw, approaches.Count * 2, _indoor);
+            var guards = new int[approaches.Count];
+            var outcome = new string[approaches.Count];
+            var partnerSides = new int[approaches.Count];
             var coveredYaws = new List<float>();
-            foreach (var approach in approaches)
+            foreach (var index in order)
             {
                 if (posts.Count >= botCount)
                 {
                     break;
                 }
-                var beyondSum = Vector3.zero;
-                foreach (var member in approach.Members)
+                var approach = approaches[index];
+                Describe(approach, out var point, out var inward, out _);
+                var post = ApproachPost(player, point, inward, maxRange, posts, partnerSides[index], out var why);
+                if (post == null)
                 {
-                    beyondSum += _beyond[member];
+                    outcome[index] ??= why;
+                    continue;
                 }
-                var post = ApproachPost(player, new Vector3(approach.Exit.X, approach.Exit.Y, approach.Exit.Z), beyondSum / approach.Members.Count, maxRange, posts);
-                if (post != null)
+                posts.Add(post);
+                coveredYaws.Add(approach.Yaw);
+                guards[index]++;
+                if (partnerSides[index] == 0)
                 {
-                    posts.Add(post);
-                    coveredYaws.Add(approach.Yaw);
+                    partnerSides[index] = IndoorApproaches.SideOf(new V3(post.Spot.x, post.Spot.y, post.Spot.z),
+                        new V3(point.x, point.y, point.z), new V3(inward.x, 0f, inward.z));
+                    if (partnerSides[index] == 0)
+                    {
+                        partnerSides[index] = 1;
+                    }
                 }
+            }
+
+            report.Append($"; {approaches.Count} approach(es): ");
+            for (var a = 0; a < approaches.Count; a++)
+            {
+                var approach = approaches[a];
+                Describe(approach, out var point, out _, out var kind);
+                var flat = point - player;
+                flat.y = 0f;
+                var turn = GuardFormation.Normalize(approach.Yaw - lookYaw);
+                var bearing = turn > 180f ? $"{360f - turn:0} deg left" : $"{turn:0} deg right";
+                var status = guards[a] >= 2 ? "guarded twice" : guards[a] == 1 ? "guarded" : outcome[a] != null ? $"unguarded ({outcome[a]})" : "unguarded (no bot left)";
+                report.Append(a == 0 ? "" : ", ").Append($"{kind.ToString().ToLowerInvariant()} {approach.Weight} route(s) {flat.magnitude:0} m {bearing} {status}");
             }
             if (posts.Count == 0)
             {
+                report.Append("; no post found, using the even detail");
                 return false;
             }
 
@@ -458,66 +571,196 @@ namespace MiyakoCarryService.Client.C2Sain
                 AddIfFound(posts, BestSpot(player, yaws[i], 45f, Mathf.Min(minRange, 2f), maxRange, null, true, posts, "gap"));
             }
             return true;
+
+            // An approach's averaged point, the direction from it into the player's room (against the way
+            // its routes leave), and what it looks like (IndoorApproaches.Classify).
+            void Describe(Approach approach, out Vector3 point, out Vector3 inward, out ApproachKind kind)
+            {
+                point = new Vector3(approach.Exit.X, approach.Exit.Y, approach.Exit.Z);
+                var beyondSum = Vector3.zero;
+                var widthSum = 0f;
+                foreach (var member in approach.Members)
+                {
+                    beyondSum += _beyond[member];
+                    widthSum += _exitWidths[member];
+                }
+                var beyondAvg = beyondSum / approach.Members.Count;
+                inward = point - beyondAvg;
+                inward.y = 0f;
+                if (inward.sqrMagnitude < 0.01f)
+                {
+                    inward = player - point;
+                    inward.y = 0f;
+                }
+                inward = inward.sqrMagnitude > 0.0001f ? inward.normalized : Vector3.forward;
+                kind = IndoorApproaches.Classify(widthSum / approach.Members.Count, beyondAvg.y - point.y, _indoor);
+            }
         }
 
         /// <summary>
-        /// A post covering one approach: on the player's side of where the routes leave, standing back
-        /// from the opening, in the player's space, with a clear view of the opening. Prefers cover and a
-        /// wall beside the post (a doorframe or corner). Null when nothing qualifies.
+        /// Samples a route every IndoorPlanSettings.SampleStep m from <paramref name="start"/> into
+        /// _samples, with whether each point is in the player's space into _inSpace: within
+        /// MAX_HEIGHT_FOR_SPACE m of the player's height, and either a straight navmesh line from the
+        /// player or an unobstructed line of sight from the player's eyes at chest height (so a table or
+        /// a pillar does not end the room). Stops once the route has stayed out for OutRun m, or after
+        /// EXIT_SCAN_MAX m plus OutRun.
         /// </summary>
-        private static GuardPost ApproachPost(Vector3 player, Vector3 exit, Vector3 beyond, float maxRange, List<GuardPost> taken)
+        private static void WalkRoute(Vector3 start, Vector3 eye, float playerY, Vector3[] corners)
         {
-            var toExit = exit - player;
-            toExit.y = 0f;
-            var length = toExit.magnitude;
-            if (length < 0.5f)
-            {
-                return null;
-            }
-            var forward = toExit / length;
-            var right = Vector3.Cross(Vector3.up, forward);
-            var standBack = Mathf.Clamp(length - 1.5f, 1.5f, Mathf.Min(5f, maxRange));
+            _samples.Clear();
+            _inSpace.Clear();
             var hard = LayersMaskController.HighPolyWithTerrainMask;
-            var bestScore = float.MinValue;
-            GuardPost best = null;
-
-            foreach (var along in new[] { standBack, standBack - 1f, standBack + 1f })
+            var step = _indoor.SampleStep;
+            var needed = Mathf.Max(1, Mathf.CeilToInt(_indoor.OutRun / step - 1e-4f));
+            var limit = EXIT_SCAN_MAX + _indoor.OutRun;
+            var outCount = 0;
+            var previous = start;
+            var travelled = 0f;
+            var nextAt = 0f;
+            _samples.Add(start);
+            _inSpace.Add(true);
+            nextAt += step;
+            foreach (var corner in corners)
             {
-                foreach (var sideways in new[] { 0f, 0.8f, -0.8f, 1.5f, -1.5f })
+                var segment = Vector3.Distance(previous, corner);
+                while (segment > 0.001f && nextAt <= travelled + segment && nextAt <= limit)
                 {
-                    if (along < 1f || !NavMesh.SamplePosition(player + forward * along + right * sideways, out var hit, 0.8f, NavMesh.AllAreas))
+                    var p = Vector3.Lerp(previous, corner, (nextAt - travelled) / segment);
+                    var inside = Mathf.Abs(p.y - playerY) <= MAX_HEIGHT_FOR_SPACE
+                        && (!NavMesh.Raycast(start, p, out _, NavMesh.AllAreas) || !Physics.Linecast(eye, p + Vector3.up * CHEST_HEIGHT, hard));
+                    _samples.Add(p);
+                    _inSpace.Add(inside);
+                    outCount = inside ? 0 : outCount + 1;
+                    if (outCount >= needed)
                     {
+                        return;
+                    }
+                    nextAt += step;
+                }
+                travelled += segment;
+                previous = corner;
+                if (nextAt > limit)
+                {
+                    return;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Free width (m) across the route at sample <paramref name="index"/> of _samples: hard geometry
+        /// to the left plus to the right at 1 m height, each capped at WIDTH_PROBE m (so open floor
+        /// measures 2 x WIDTH_PROBE). Two raycasts.
+        /// </summary>
+        private static float WidthAt(int index)
+        {
+            var before = _samples[Mathf.Max(0, index - 1)];
+            var after = _samples[Mathf.Min(_samples.Count - 1, index + 1)];
+            var along = after - before;
+            along.y = 0f;
+            if (along.sqrMagnitude < 0.0001f)
+            {
+                return WIDTH_PROBE * 2f;
+            }
+            var side = Vector3.Cross(Vector3.up, along.normalized);
+            var origin = _samples[index] + Vector3.up;
+            var hard = LayersMaskController.HighPolyWithTerrainMask;
+            var right = Physics.Raycast(origin, side, out var r, WIDTH_PROBE, hard) ? r.distance : WIDTH_PROBE;
+            var leftSide = Physics.Raycast(origin, -side, out var l, WIDTH_PROBE, hard) ? l.distance : WIDTH_PROBE;
+            return right + leftSide;
+        }
+
+        /// <summary>
+        /// A post watching one approach (fork v9): candidates on rings 2-5 m from the approach point, up
+        /// to 75 degrees either side of the way into the player's room, each needing to be on the
+        /// navmesh on the player's floor, within <paramref name="maxRange"/> m of the player, clear of
+        /// the other posts, in the player's space and with a view of the approach at crouched eye
+        /// height. IndoorApproaches.ScorePost ranks the survivors (cover, a wall beside, an angle off
+        /// the axis, the other side from a first guard). The post watches the approach point. Null when
+        /// nothing qualifies; <paramref name="why"/> then says where the candidates fell out.
+        /// </summary>
+        /// <param name="point">The approach point (the doorway, or where the routes leave).</param>
+        /// <param name="inward">Horizontal unit direction from the approach into the player's room.</param>
+        /// <param name="partnerSide">IndoorApproaches.SideOf the first guard's post on this approach, or 0.</param>
+        private static GuardPost ApproachPost(Vector3 player, Vector3 point, Vector3 inward, float maxRange, List<GuardPost> taken, int partnerSide, out string why)
+        {
+            var hard = LayersMaskController.HighPolyWithTerrainMask;
+            var pointV3 = new V3(point.x, point.y, point.z);
+            var inwardV3 = new V3(inward.x, 0f, inward.z);
+            var playerV3 = new V3(player.x, player.y, player.z);
+            var bestScore = float.NegativeInfinity;
+            GuardPost best = null;
+            int tries = 0, offMesh = 0, tooFar = 0, crowded = 0, outside = 0, noView = 0, badAngle = 0;
+
+            foreach (var distance in PostRings)
+            {
+                foreach (var angle in PostAngles)
+                {
+                    tries++;
+                    var raw = point + Quaternion.Euler(0f, angle, 0f) * inward * distance;
+                    if (!NavMesh.SamplePosition(raw, out var hit, 0.6f, NavMesh.AllAreas) || Mathf.Abs(hit.position.y - player.y) > MAX_HEIGHT_FOR_SPACE)
+                    {
+                        offMesh++;
                         continue;
                     }
                     var p = hit.position;
+                    var fromPlayer = p - player;
+                    fromPlayer.y = 0f;
+                    if (fromPlayer.magnitude > maxRange)
+                    {
+                        tooFar++;
+                        continue;
+                    }
                     var tooClose = false;
                     foreach (var other in taken)
                     {
                         tooClose |= (other.Spot - p).sqrMagnitude < MIN_POST_SPACING * MIN_POST_SPACING;
                     }
-                    if (tooClose || !C2Nav.IsInPlayersSpace(player, p) || Physics.Linecast(p + Vector3.up * 1.5f, exit + Vector3.up * 1.2f, hard))
+                    if (tooClose)
                     {
+                        crowded++;
                         continue;
                     }
-                    var watch = beyond - p;
-                    watch.y = 0f;
-                    watch = watch.sqrMagnitude > 0.25f ? watch.normalized : forward;
-                    var score = C2Nav.ScoreCover(p, watch, out var covered);
-                    var side = Vector3.Cross(Vector3.up, watch);
-                    if (Physics.Raycast(p + Vector3.up * 1f, side, 1f, hard) || Physics.Raycast(p + Vector3.up * 1f, -side, 1f, hard))
+                    if (!C2Nav.IsInPlayersSpace(player, p))
                     {
-                        score += 1f;
+                        outside++;
+                        continue;
                     }
-                    score -= Mathf.Abs(sideways) * 0.1f;
+                    if (Physics.Linecast(p + Vector3.up * CROUCHED_EYE, point + Vector3.up * CROUCHED_EYE, hard))
+                    {
+                        noView++;
+                        continue;
+                    }
+                    var watch = point - p;
+                    watch.y = 0f;
+                    watch = watch.sqrMagnitude > 0.01f ? watch.normalized : -inward;
+                    var cover = C2Nav.ScoreCover(p, watch, out var covered);
+                    var side = Vector3.Cross(Vector3.up, watch);
+                    var wall = Physics.Raycast(p + Vector3.up, side, 1f, hard) || Physics.Raycast(p + Vector3.up, -side, 1f, hard);
+                    var candidate = new PostCandidate { Spot = new V3(p.x, p.y, p.z), Cover = cover, WallBeside = wall, SightClear = true };
+                    var score = IndoorApproaches.ScorePost(candidate, pointV3, inwardV3, playerV3, partnerSide, _indoor) - Random.value * 0.05f;
+                    if (float.IsNegativeInfinity(score))
+                    {
+                        badAngle++;
+                        continue;
+                    }
                     if (score > bestScore)
                     {
                         bestScore = score;
-                        best = new GuardPost { Spot = p, Watch = watch, Covered = covered, Kind = "approach" };
+                        best = new GuardPost { Spot = p, Watch = watch, Covered = covered, Kind = "approach", SectorYaw = GuardFormation.YawOf(fromPlayer.x, fromPlayer.z) };
                     }
                 }
             }
+            why = best != null ? null
+                : $"no spot: {tries} tries, {offMesh} off the navmesh or on another floor, {tooFar} too far from you, {crowded} beside another post, "
+                    + $"{outside} outside your space, {noView} with no view of it, {badAngle} too close, too far or in your way";
             return best;
         }
+
+        /// <summary>Distances (m) from an approach point at which ApproachPost tries spots.</summary>
+        private static readonly float[] PostRings = { 2f, 3f, 4f, 5f };
+
+        /// <summary>Degrees either side of the way into the player's room at which ApproachPost tries spots.</summary>
+        private static readonly float[] PostAngles = { 0f, 20f, -20f, 40f, -40f, 60f, -60f, 75f, -75f };
 
         /// <summary>
         /// Collects colliders near the player that can serve as cover, using SAIN's cover-finder rules

@@ -535,7 +535,8 @@ namespace MiyakoCarryService.Client.C2Sain
         /// <summary>
         /// Logs a plan when debug logging is on: a header ("guard plan for" or "defend plan for" the
         /// player, indoors or outdoors, posts per bots, and "facing a contact report" or "facing a heard sound"
-        /// when the plan faces one) and one line per bot (GuardPlanner.DescribePost).
+        /// when the plan faces one) and one line per bot (GuardPlanner.DescribePost). Since fork v9 a
+        /// guard plan that tried indoor approaches ends with GuardPlanner.LastIndoorReport.
         /// </summary>
         private static void LogPlan(string what, Player player, bool indoors, List<GuardPost> posts, Vector3? threat, bool heard, GuardPlanState state)
         {
@@ -550,6 +551,12 @@ namespace MiyakoCarryService.Client.C2Sain
                 state.Posts.TryGetValue(member.ProfileId, out var post);
                 McsLogger.LogInfo($"[{ForkLog.Tag}]   {member.Profile?.Nickname}: "
                     + GuardPlanner.DescribePost(player.Position, player.LookDirection, member.Position, post));
+            }
+            if (what == "guard plan" && GuardPlanner.LastIndoorReport != null)
+            {
+                // Fork v9: after the post lines, so log readers that end a plan's block at its first
+                // line without two leading spaces still read every post.
+                McsLogger.LogInfo($"[{ForkLog.Tag}] {GuardPlanner.LastIndoorReport}");
             }
         }
 

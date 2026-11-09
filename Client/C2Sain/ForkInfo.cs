@@ -254,10 +254,46 @@ namespace MiyakoCarryService.Client.C2Sain
         ///      indoors, sends MAX_ROUTES or the sampling down;
         ///    - the user seeing guards posted in the next room, facing a wall, or standing in a doorway
         ///      rather than beside it, sends the post scoring back.
+        ///    Result (2026-11-09, its first raid, Lighthouse; evidence/2026-11-09-build-9-stuck-spawn):
+        ///    no evidence either way. Every one of the raid's 15 guard plans was outdoors, so the indoor
+        ///    planner never ran. That raid is the reason for v10.
+        /// 10 (2026-11-09) Test build 10: bots stuck from spawn when the player stands off the navmesh.
+        ///    Measured before it (evidence/2026-11-09-build-9-stuck-spawn, one Lighthouse raid ended by
+        ///    Alt+F4): Infil spawned the player at point #13 ("Tunnel"). The 3 carry bots started 30 m away
+        ///    on one spot (every earlier raid logged 0 m) and stayed there, crouched, the whole raid,
+        ///    through teleport, regroup and the player walking off. All 15 guard plans had 0 posts.
+        ///    Reading (inferred from the log, not proven): the player was off the navmesh. MCS sets a
+        ///    follow target only when it finds a path to the player, and otherwise holds position; the
+        ///    guard planner needs the player within 1.5 m of the navmesh.
+        ///    Changed:
+        ///    - Follow (McsBaseLayer.UpdateLeadNearMoveTarget, which also serves a guard bot with no
+        ///      post): when neither a follow spot nor a path to the player works, the bot walks to the
+        ///      closest spot it can reach toward the walkable point nearest the player (searched to
+        ///      32 m), if that is at least 2 m closer than it is (C2Nav.TryClosestReachable,
+        ///      Core/OffMesh.cs). Upstream held position for good.
+        ///    - Teleport (CommandMgr.ForceTeleportCommandAction): with the player off the navmesh, the
+        ///      bot lands on the walkable point nearest the player instead of at their feet, where it
+        ///      could never move again.
+        ///    Diagnostics: "off navmesh:" lines when the player has been off the navmesh for 3 s and
+        ///    when they are back (OffMeshWatch; written whether or not the diagnostic log is on); with
+        ///    the diagnostic log on, "reach:" lines for a bot's first fallback walk or its staying put,
+        ///    a "teleport:" line, and "; you are off the navmesh (...)" on a plan header with fewer
+        ///    posts than bots. The summary tool prints these from v10.
+        ///    Pooling: UNRESTRICTED for everything earlier builds measure. The fallback runs only where
+        ///    earlier builds left a bot with no move target at all, and no existing line changed format
+        ///    except that plan-header suffix, which appears only with the player off the navmesh.
+        ///    Falsifiers:
+        ///    - a raid at Infil's Lighthouse point #13 (the Infil "Spawning at #13" line) with no
+        ///      "off navmesh:" line means the player was on the navmesh there and the reading above is
+        ///      wrong: look for another cause of the stuck bots;
+        ///    - the user seeing a bot walk away from them, or a "reach:" walk whose spot is farther from
+        ///      the player than the bot started, sends the fallback back;
+        ///    - bots that again sit still for a whole raid with "reach: ... stays put: no path from the
+        ///      bot" mean the bots themselves were off the navmesh (spawn snapping), which v10 does not fix.
         /// </summary>
-        public const int ForkVersion = 9;
+        public const int ForkVersion = 10;
 
         /// <summary>Short label used in logs and the overlay.</summary>
-        public const string Label = "C2/SAIN fork v9";
+        public const string Label = "C2/SAIN fork v10";
     }
 }

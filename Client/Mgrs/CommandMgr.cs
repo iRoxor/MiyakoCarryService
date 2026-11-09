@@ -1040,7 +1040,19 @@ namespace MiyakoCarryService.Client.Mgrs
                 mcsBotPlayerData.IsLooting = false;
                 mcsBotPlayerData.TargetPos = null;
                 mcsBotPlayerData.ProxyTargetId = null;
-                mcsBotPlayer.Teleport(mcsBotPlayerData.LeadPlayer.Position, true);
+                // Fork v10: a bot dropped off the navmesh can never move again, so when the player stands
+                // off it, land the bot on the walkable point nearest the player instead (C2Nav, up to 32 m).
+                var destination = mcsBotPlayerData.LeadPlayer.Position;
+                if (!C2Sain.C2Nav.IsOnNavMesh(destination) && C2Sain.C2Nav.TryNearestWalkable(destination, out var walkable))
+                {
+                    if (C2Sain.ForkConfig.DebugLog?.Value == true)
+                    {
+                        McsLogger.LogInfo($"[{C2Sain.ForkLog.Tag}] teleport: you are off the navmesh, so {mcsBotPlayer.Profile?.Nickname} "
+                            + $"lands on the nearest walkable ground, {Vector3.Distance(walkable, destination):0} m from you");
+                    }
+                    destination = walkable;
+                }
+                mcsBotPlayer.Teleport(destination, true);
             }
             var playerPosition = mcsBotPlayer.Position;
             botOwner.Mover._lastGoodCastPoint = botOwner.Mover._prevSuccessLinkedFrom = botOwner.Mover._prevLinkPos = botOwner.Mover.PositionOnWayInner = playerPosition;

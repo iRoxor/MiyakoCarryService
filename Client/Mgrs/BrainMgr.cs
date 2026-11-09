@@ -52,6 +52,7 @@ namespace MiyakoCarryService.Client.Mgrs
             MiyakoCarryService.Client.C2Sain.ForkLog.StopRaidClock();
             MiyakoCarryService.Client.C2Sain.FootstepFeed.Clear(); // Fork v8: hearing state
             MiyakoCarryService.Client.C2Sain.HeardWatch.Clear();
+            MiyakoCarryService.Client.C2Sain.OffMeshWatch.Clear(); // Fork v10: off-navmesh episodes
         }
 
         private async Task Reload()

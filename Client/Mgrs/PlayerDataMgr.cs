@@ -98,6 +98,8 @@ namespace MiyakoCarryService.Client.Mgrs
                             // and carry bots whose view has frozen.
                             C2Sain.OpenGroundWatch.Sample(mcsBotPlayerData, brain.ActiveLayerName(), brain.GetActiveNodeReason());
                             C2Sain.FrozenViewWatch.Sample(mcsBotPlayerData, brain.ActiveLayerName(), brain.GetActiveNodeReason());
+                            // Fork v10: logs the lead player leaving and rejoining the navmesh (once per player per second).
+                            C2Sain.OffMeshWatch.Sample(mcsBotPlayerData.LeadPlayer);
 
                             if (!LayerUtils.IsMcsBotPlayerInjected(mcsBotPlayerData.BotOwner))
                             {

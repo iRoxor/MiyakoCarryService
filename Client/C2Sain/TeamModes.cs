@@ -536,7 +536,9 @@ namespace MiyakoCarryService.Client.C2Sain
         /// Logs a plan when debug logging is on: a header ("guard plan for" or "defend plan for" the
         /// player, indoors or outdoors, posts per bots, and "facing a contact report" or "facing a heard sound"
         /// when the plan faces one) and one line per bot (GuardPlanner.DescribePost). Since fork v9 a
-        /// guard plan that tried indoor approaches ends with GuardPlanner.LastIndoorReport.
+        /// guard plan that tried indoor approaches ends with GuardPlanner.LastIndoorReport. Since fork
+        /// v10 a header with fewer posts than bots ends with OffMeshWatch.PlanNote when the player is
+        /// off the navmesh ("; you are off the navmesh (nearest walkable ground: 12 m)").
         /// </summary>
         private static void LogPlan(string what, Player player, bool indoors, List<GuardPost> posts, Vector3? threat, bool heard, GuardPlanState state)
         {
@@ -545,7 +547,8 @@ namespace MiyakoCarryService.Client.C2Sain
                 return;
             }
             McsLogger.LogInfo($"[{ForkLog.Tag}] {what} for {player.Profile?.Nickname}: {(indoors ? "indoors" : "outdoors")}, "
-                + $"{posts.Count} post(s) for {_members.Count} bot(s){(threat.HasValue ? (heard ? ", facing a heard sound" : ", facing a contact report") : "")}");
+                + $"{posts.Count} post(s) for {_members.Count} bot(s){(threat.HasValue ? (heard ? ", facing a heard sound" : ", facing a contact report") : "")}"
+                + (posts.Count < _members.Count ? OffMeshWatch.PlanNote(player.Position) : ""));
             foreach (var member in _members)
             {
                 state.Posts.TryGetValue(member.ProfileId, out var post);

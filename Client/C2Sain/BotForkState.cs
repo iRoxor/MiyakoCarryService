@@ -107,6 +107,13 @@ namespace MiyakoCarryService.Client.C2Sain
         /// <summary>Which plan gave the current guard spot (GuardPost.Kind, or "follow" for the fallback), for the overlay.</summary>
         public string GuardPostKind = "";
 
+        /// <summary>
+        /// Fork v10: whether McsBaseLayer.LogReach has logged this bot's fallback move toward the closest
+        /// reachable spot, and its staying put with no closer spot, since its last normal follow path.
+        /// </summary>
+        public bool ReachMoveLogged;
+        public bool ReachStayLogged;
+
         /// <summary>True when the Guard layer wants the bot to hurry (returning from a chase, far away, or flanking).</summary>
         public bool MoveFast;
 

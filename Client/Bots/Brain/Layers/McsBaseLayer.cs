@@ -1563,6 +1563,12 @@ namespace MiyakoCarryService.Client.Bots.Brain.Layers
             return found;
         }
 
+        /// <summary>
+        /// Sets the bot's follow move target near the player: a formation slot, a step back when too close,
+        /// a follow spot in the player's space, or a path toward the player; since fork v10, failing all of
+        /// those, the closest spot the bot can reach (C2Nav.TryClosestReachable). Writes _currentMoveTarget
+        /// and _lastTargetPos; <paramref name="nextUpdateTime"/> is the delay before the next refresh.
+        /// </summary>
         public virtual void UpdateLeadNearMoveTarget(Vector3? leadPos, out float nextUpdateTime)
         {
             if (!leadPos.HasValue)
@@ -1616,14 +1622,73 @@ namespace MiyakoCarryService.Client.Bots.Brain.Layers
             {
                 if (!CanGetPathToRun(BotOwner.Position, leadPos.Value, McsBotPlayerData, out corners) || corners == null)
                 {
-                    nextUpdateTime = 0.25f;
+                    // Fork v10: with no path to the player (off the navmesh, or on a piece of it the bot
+                    // cannot reach), walk to the closest spot the bot can reach instead of holding where it
+                    // stands. Upstream left the bot without a move target, so it held position for good.
+                    if (C2Sain.C2Nav.TryClosestReachable(BotOwner.Position, leadPos.Value, out corners, out var reachEnd, out var why))
+                    {
+                        LogReach(leadPos.Value, reachEnd, null);
+                        _lastTargetPos = leadPos;
+                        _currentMoveTarget = GetPointAlongPathAtDistance(corners, 15f);
+                        nextUpdateTime = 1f;
+                        return;
+                    }
+                    LogReach(leadPos.Value, reachEnd, why);
+                    nextUpdateTime = why == C2Sain.C2Nav.REACH_NO_CLOSER ? 1f : 0.25f;
                     return;
                 }
             }
 
+            ClearReachLog();
             _lastTargetPos = leadPos;
             _currentMoveTarget = GetPointAlongPathAtDistance(corners, 15f);
             nextUpdateTime = 1f;
+        }
+
+        /// <summary>
+        /// Fork v10: with "Debug: diagnostic log" on, logs a bot's first fallback move toward the closest
+        /// spot it can reach, and the first time it can get no closer (or finds nothing), once each until
+        /// a normal follow path works again (ClearReachLog). Reads and writes the bot's fork state flags.
+        /// </summary>
+        /// <param name="leadPos">The player's position.</param>
+        /// <param name="end">The fallback spot (when <paramref name="why"/> is null) or the closest reachable spot found.</param>
+        /// <param name="why">Null for a move; otherwise why the bot stays (C2Nav.TryClosestReachable).</param>
+        private void LogReach(Vector3 leadPos, Vector3 end, string why)
+        {
+            var fork = McsBotPlayerData?.Fork;
+            if (fork == null || C2Sain.ForkConfig.DebugLog?.Value != true)
+            {
+                return;
+            }
+            var name = McsBotPlayerData.Player?.Profile?.Nickname;
+            var toPlayer = Vector3.Distance(BotOwner.Position, leadPos);
+            if (why == null)
+            {
+                if (!fork.ReachMoveLogged)
+                {
+                    fork.ReachMoveLogged = true;
+                    fork.ReachStayLogged = false;
+                    McsLogger.LogInfo($"[{C2Sain.ForkLog.Tag}] reach: {name} has no path to you ({toPlayer:0} m away); "
+                        + $"walking to the closest spot it can reach, {Vector3.Distance(end, leadPos):0} m from you");
+                }
+                return;
+            }
+            if (!fork.ReachStayLogged)
+            {
+                fork.ReachStayLogged = true;
+                McsLogger.LogInfo($"[{C2Sain.ForkLog.Tag}] reach: {name} has no path to you and stays put, {toPlayer:0} m away: {why}");
+            }
+        }
+
+        /// <summary>Fork v10: re-arms LogReach once a normal follow path works again.</summary>
+        private void ClearReachLog()
+        {
+            var fork = McsBotPlayerData?.Fork;
+            if (fork != null)
+            {
+                fork.ReachMoveLogged = false;
+                fork.ReachStayLogged = false;
+            }
         }
 
         public virtual bool TryUpdateFormationMoveTarget(Vector3 leadPos, out float nextUpdateTime)

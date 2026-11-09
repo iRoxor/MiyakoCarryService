@@ -8,8 +8,10 @@
 // floor, and the bot then pathed there through doors and detours. Here a follow spot, and an
 // indoor guard post, counts only if it is "in the player's space": within 1.5 m of the player's
 // height and reachable from the player by a straight line on the navmesh. Outdoor guard posts
-// need only a short path (IsNearPlayerOnFoot). Reads and writes no files; uses Unity's navmesh
-// and physics queries.
+// need only a short path (IsNearPlayerOnFoot). Since fork v10 it also finds the closest spot a bot
+// can reach when it has no path to the player (TryClosestReachable, for McsBaseLayer's follow and
+// ForceTeleportCommandAction) and tests whether the player is on the navmesh (OffMeshWatch, the plan
+// log). Reads and writes no files; uses Unity's navmesh and physics queries.
 
 using UnityEngine;
 using UnityEngine.AI;
@@ -109,6 +111,79 @@ namespace MiyakoCarryService.Client.C2Sain
             spot = default;
             corners = null;
             return false;
+        }
+
+        /// <summary>Fork v10: the off-navmesh tunables (Core/OffMesh.cs), shared by the fallback and OffMeshWatch.</summary>
+        internal static readonly Core.OffMeshSettings OffMesh = new();
+
+        /// <summary>Fork v10: TryClosestReachable's "why" when the bot already stands as close as it can get.</summary>
+        public const string REACH_NO_CLOSER = "already as close as it can get";
+
+        /// <summary>Fork v10: true when a navmesh point lies within OffMeshSettings.OnMeshRadius of the position.</summary>
+        public static bool IsOnNavMesh(Vector3 position)
+        {
+            return NavMesh.SamplePosition(position, out _, OffMesh.OnMeshRadius, NavMesh.AllAreas);
+        }
+
+        /// <summary>
+        /// Fork v10: the walkable point nearest the position, searching OffMeshSettings.SearchRadii in
+        /// turn (smallest first). False when none lies within the largest radius. The point may be on
+        /// a navmesh piece no bot can reach; TryClosestReachable deals with that.
+        /// </summary>
+        /// <param name="position">Where to search from (the player).</param>
+        /// <param name="point">The nearest walkable point found.</param>
+        public static bool TryNearestWalkable(Vector3 position, out Vector3 point)
+        {
+            foreach (var radius in OffMesh.SearchRadii)
+            {
+                if (NavMesh.SamplePosition(position, out var hit, radius, NavMesh.AllAreas))
+                {
+                    point = hit.position;
+                    return true;
+                }
+            }
+            point = default;
+            return false;
+        }
+
+        /// <summary>
+        /// Fork v10: the fallback when a bot has no path to the player (the player is off the navmesh,
+        /// or on a piece of it the bot cannot reach). Finds the walkable point nearest the player
+        /// (TryNearestWalkable) and the bot's path toward it; a partial path ends at the closest point
+        /// the bot can reach. True only when that end is worth walking to (OffMeshRules.WorthMoving:
+        /// at least MinGain closer to the player than the bot is). One SamplePosition per search radius
+        /// and one CalculatePath per call.
+        /// </summary>
+        /// <param name="botPos">The bot's position.</param>
+        /// <param name="playerPos">The player's position.</param>
+        /// <param name="corners">The bot's path toward the spot, when one was found (even if not worth walking).</param>
+        /// <param name="end">The path's last corner: the closest spot the bot can reach.</param>
+        /// <param name="why">When false: "no walkable ground near you", "no path from the bot" or "already as close as it can get".</param>
+        public static bool TryClosestReachable(Vector3 botPos, Vector3 playerPos, out Vector3[] corners, out Vector3 end, out string why)
+        {
+            corners = null;
+            end = default;
+            if (!TryNearestWalkable(playerPos, out var anchor))
+            {
+                why = "no walkable ground near you";
+                return false;
+            }
+            var path = new NavMeshPath();
+            if (!NavMesh.CalculatePath(botPos, anchor, NavMesh.AllAreas, path)
+                || path.status == NavMeshPathStatus.PathInvalid || path.corners == null || path.corners.Length == 0)
+            {
+                why = "no path from the bot";
+                return false;
+            }
+            corners = path.corners;
+            end = corners[corners.Length - 1];
+            if (!Core.OffMeshRules.WorthMoving(Vector3.Distance(botPos, playerPos), Vector3.Distance(end, playerPos), OffMesh))
+            {
+                why = REACH_NO_CLOSER;
+                return false;
+            }
+            why = null;
+            return true;
         }
 
 

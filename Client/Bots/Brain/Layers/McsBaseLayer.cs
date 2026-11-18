@@ -523,8 +523,8 @@ namespace MiyakoCarryService.Client.Bots.Brain.Layers
                 }
                 catch (Exception e)
                 {
-                    // A fault in the new rules must not break the bot: log it (at most every 30 s) and let MCS's own
-                    // rules below take this walk. The next follow walk tries the new rules again.
+                    // Fork v16: a fault in the new rules must not break the bot: log it (at most every 30 s) and let MCS's
+                    // own rules below take this walk. The next follow walk tries the new rules again.
                     C2Sain.FollowWatch.Fault("the follow walk's end check (this walk falls back to MCS's own rules)", e);
                     McsBotPlayerData.Fork.Follow.OnDecision();
                 }
@@ -732,7 +732,7 @@ namespace MiyakoCarryService.Client.Bots.Brain.Layers
             }
             catch (Exception e)
             {
-                // The game calls above are the part of v15 no harness reaches; a fault must leave the bot as it was.
+                // Fork v16: the game calls above are the part of v15 no harness reaches; a fault must leave the bot as it was.
                 C2Sain.FollowWatch.Fault("the follow re-path", e);
             }
         }

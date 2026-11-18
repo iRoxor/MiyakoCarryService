@@ -8,6 +8,9 @@
 // nobody pools across builds, so one behaviour counter is enough; there is no
 // schema version.
 
+using System;
+using System.Reflection;
+
 namespace MiyakoCarryService.Client.C2Sain
 {
     /// <summary>Version stamp of the fork. Bump on any change a player could observe.</summary>
@@ -630,13 +633,6 @@ namespace MiyakoCarryService.Client.C2Sain
         ///      prone player stands on purpose and is never re-pathed. MCS's own 30 s teleport (20 m or more away) is kept.
         ///    - After a teleport (MCS's own, or the Force Teleport command) the next walk starts on the navmesh route at
         ///      once, and the stall wait is 1 s instead of 2 for 4 s, so the bot does not stand 7 s as in the v13 raid.
-        ///    - "The player is moving" is the larger of the game's velocity reading (Player.Velocity, the character
-        ///      controller's velocity, read from the game's IL) and the speed measured from how far their position moved
-        ///      over 0.2 s, so a velocity that reads zero in the game cannot make a walking player look still and turn
-        ///      trailing back into stop and go; the harness cannot know what the game's velocity reads.
-        ///    - A fault in the new rules must not break a bot: an exception in a follow walk's end check, in the re-path, in
-        ///      the speed rule or in reading the player's speed is logged ("... failed: ...", at most once every 30 s,
-        ///      with or without the diagnostic log) and the bot carries on under MCS's own v14 rules for that walk or frame.
         ///    Unchanged: the brain reasons Mcs:Default, Mcs:TooFar, Mcs:TooClose, Mcs:Partoling (the stats tool reads them),
         ///    the follow-distance setting's meaning as the start distance, Partoling, formation following, escorts and
         ///    every other walk (they keep EndGoToPoint's rules), and the markers.
@@ -673,16 +669,62 @@ namespace MiyakoCarryService.Client.C2Sain
         ///      still while they stand, means the release distance, the stop distance or the 0.25 m/s test is wrong;
         ///    - "Timing: follow spot picks" showing a mean of 1 ms or more a call, or a frame of 3 ms or more, with the
         ///      bots trailing (about one pick a second each) sends the re-aim rate down;
-        ///    - any "... failed:" error line from the follow code ("the follow walk's end check", "the follow re-path",
-        ///      "the follow speed rule", "player speed") is a bug to fix before anything else: the bot fell back to MCS's own
-        ///      rules for that walk, so the line says where the new rules broke;
-        ///    - bots that stop while the player walks (Default->TooFar entries as above, with "follow stall:" lines absent) with
-        ///      the log's "moving N m/s" reading 0 would mean even the position measure failed: check Core/FollowTrail.ObservePlayer.
+        ///    - any exception naming McsBaseLayer.EndFollowWalk, FollowTrail or FollowWatch is a bug to fix before anything else.
         ///    Measured: nothing yet (no raid has run v15).
+        /// 16 (2026-11-18) Test build 16: build 15 with two safeguards and a startup line that names its commit. The user had already
+        ///    copied build 15 (commit 6d8e7b40, DLL SHA-256 27e97d0c...) into the game when they were made, so the revision is a new
+        ///    version: the two builds can act differently, and a log that says v15 must mean 6d8e7b40 alone. (A Reserve raid began on
+        ///    build 15 at about 16:46 local on 2026-11-18 with the diagnostic log off: it has no v15 line with a clock.)
+        ///    Changed:
+        ///    - "The player is moving" is the larger of the game's velocity reading (Player.Velocity, the character controller's
+        ///      velocity, read from the game's IL) and the speed measured from how far their position moved over 0.2 s
+        ///      (Core/FollowTrail.ObservePlayer, setting UsePositionSpeed), so a velocity that reads zero in the game cannot make a
+        ///      walking player look still and turn trailing back into stop and go. The harness cannot know what the game's
+        ///      velocity reads; a stall line prints both readings.
+        ///    - A fault in the new rules cannot break a bot: an exception in a follow walk's end check, in the re-path, in the speed
+        ///      rule or in reading the player's speed is caught and logged ("... failed: ...", at most once every 30 s, with the
+        ///      diagnostic log on or off), and MCS's own v14 rules take that walk or frame (C2Sain/FollowWatch.Fault). v15 had no
+        ///      such guard: its end check runs inside BigBrain's per-frame check, which has no try/catch.
+        ///    - The startup line reads "loaded: SAIN fights, MCS commands (assembly 1.1.4.100+<commit>)" (ForkInfo.BuildStamp), so a
+        ///      log says which commit wrote it; the summary tool lists it among the other fork lines.
+        ///    Pooling: UNRESTRICTED with v15 and with everything v12-v14 measure. Only a velocity that reads zero, or a fault, makes
+        ///    v16 act differently from v15, and the follow-state counts of the two have the same meaning.
+        ///    Falsifiers (written before any v16 raid): v15's all stand. Also:
+        ///    - any "... failed:" error line from the follow code ("the follow walk's end check", "the follow re-path", "the follow
+        ///      speed rule", "player speed") is a bug to fix before anything else: the bot fell back to MCS's own rules for that walk,
+        ///      and the line says where the new rules broke;
+        ///    - a stall line whose speed "as the bot counted it" reads 0.0 m/s while you were walking would mean even the position
+        ///      measure failed (check Core/FollowTrail.ObservePlayer); one whose "by the game's velocity" reads 0.0 while the counted
+        ///      speed does not shows the game's velocity cannot be trusted and the position measure was needed.
+        ///    Measured: nothing yet (no raid has run v16).
         /// </summary>
-        public const int ForkVersion = 15;
+        public const int ForkVersion = 16;
 
         /// <summary>Short label used in logs and the overlay.</summary>
-        public const string Label = "C2/SAIN fork v15";
+        public const string Label = "C2/SAIN fork v16";
+
+        /// <summary>
+        /// The assembly's version stamp, "1.1.4.100+&lt;first 8 characters of the commit it was built from&gt;", written into the
+        /// DLL by the build (InformationalVersion). Read once at startup for the "loaded" log line so a log names the commit
+        /// that wrote it; "unknown" when the assembly carries none or reading it fails. Reads the assembly's metadata only.
+        /// </summary>
+        public static string BuildStamp()
+        {
+            try
+            {
+                var attribute = typeof(ForkInfo).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>();
+                var stamp = attribute?.InformationalVersion;
+                if (string.IsNullOrEmpty(stamp))
+                {
+                    return "unknown";
+                }
+                var plus = stamp.IndexOf('+');
+                return plus >= 0 && stamp.Length > plus + 9 ? stamp.Substring(0, plus + 9) : stamp;
+            }
+            catch (Exception)
+            {
+                return "unknown";
+            }
+        }
     }
 }

@@ -96,9 +96,10 @@ namespace MiyakoCarryService.Client.C2Sain.Core
         public float MovingSpeed = 0.25f;
 
         /// <summary>
-        /// True also measures the player's speed from how far their position moved since the last sample (the larger of
-        /// that and the game's velocity reading counts), so a velocity that reads zero in the game can never make a walking
-        /// player look still. The harness cannot show what the game's velocity reads.
+        /// Since fork v16 (fork v15 used the game's velocity reading alone). True also measures the player's speed from how
+        /// far their position moved since the last sample (the larger of that and the game's velocity reading counts), so a
+        /// velocity that reads zero in the game can never make a walking player look still. The harness cannot show what the
+        /// game's velocity reads.
         /// </summary>
         public bool UsePositionSpeed = true;
 

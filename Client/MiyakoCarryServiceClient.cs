@@ -129,7 +129,7 @@ namespace MiyakoCarryService.Client
                 LocalizationManager.Instance.UpdateLocales(kvp.Key, kvp.Value);
             }
             EnableAllPatches();
-            McsLogger.LogInfo($"[{C2Sain.ForkInfo.Label}] loaded: SAIN fights, MCS commands");
+            McsLogger.LogInfo($"[{C2Sain.ForkInfo.Label}] loaded: SAIN fights, MCS commands (assembly {C2Sain.ForkInfo.BuildStamp()})"); // Fork v16: names the commit
             GameLoop.Instance.Init();
         }
 

@@ -63,8 +63,8 @@ namespace MiyakoCarryService.Client.Bots.Brain.Logics
                 }
                 catch (Exception e)
                 {
-                    // A fault in the new speed rule must not stop the bot walking: log it (at most every 30 s) and
-                    // let MCS's own rule below move it this frame.
+                    // Fork v16: a fault in the new speed rule must not stop the bot walking: log it (at most every
+                    // 30 s) and let MCS's own rule below move it this frame.
                     C2Sain.FollowWatch.Fault("the follow speed rule (this frame falls back to MCS's own rule)", e);
                 }
             }

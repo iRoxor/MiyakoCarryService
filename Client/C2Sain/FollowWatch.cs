@@ -20,6 +20,10 @@
 //        can tell the two kinds apart (the user's own Force Teleports and MCS's 30 s one in the v13 raid).
 // The format is read by .for-claude-to-reference/tools/mcs_follow_stats.py and mcs_fork_log_summary.py.
 //
+// Since fork v16 it also writes, with "Debug: diagnostic log" on or off, one error line per fault in the follow code
+// ("... failed: ..."; Fault, at most one every 30 s), after which the bot carries on under MCS's own rules for that walk
+// or frame, and the stall line prints the player's speed twice (by the game's velocity, and as the bot counted it).
+//
 // Module state: none that lives across calls except the error-line throttle (_nextErrorLog); the per-bot stall
 // state is in BotForkState.Follow.
 

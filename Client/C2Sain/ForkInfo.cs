@@ -438,8 +438,9 @@ namespace MiyakoCarryService.Client.C2Sain
         ///      quick flash; it was still seen with ECOTI's thermal on the goggles; and the beacon hung above the
         ///      character instead of sitting on it (0.4 m above the head bone; a helmet's top is about 0.2 m above
         ///      it, from the screenshots).
-        ///    Second result (2026-11-18, the user's raid with v13, whose planner is v12's: Interchange, 61 minutes, one
-        ///    carry bot; evidence/2026-11-18-build-13-first-raid): the first indoor plans in the game. 219 plans with
+        ///    Second result (2026-11-18, the user's raid with v13, whose planner is v12's: Interchange, 61 minutes of log
+        ///    clock, 26 of them paused with the in-game pause mod, one carry bot; evidence/2026-11-18-build-13-first-raid):
+        ///    the first indoor plans in the game. 219 plans with
         ///    timing, 201 indoors and 18 outdoors. Indoors: work median 33 ms (max 53), 13 frames (max 24), worst
         ///    frame median 3.2 ms (max 7.4), ready 0.26 s after it was asked for (max 0.46). All 219: worst frame p99
         ///    4.2 ms; ready median 0.25 s, p99 0.43 s.
@@ -501,14 +502,16 @@ namespace MiyakoCarryService.Client.C2Sain
         ///      lost (the user's eye), changes MarkerHeight; a beacon too small to see through ECOTI at 100 m
         ///      changes BeaconSize;
         ///    - a "markers: switched off ... after an error" line is a bug to fix before anything else.
-        ///    Result (2026-11-18, the user's first raid with v13: Interchange, 61 minutes, one carry bot, a GPNVG-18
-        ///    with ECOTI in Outline mode; evidence/2026-11-18-build-13-first-raid):
+        ///    Result (2026-11-18, the user's first raid with v13: Interchange, 61 minutes of log clock of which 25.9
+        ///    were a pause with the in-game pause mod (07:42.6-33:38.1), one carry bot, a GPNVG-18 with ECOTI in
+        ///    Outline mode; evidence/2026-11-18-build-13-first-raid):
         ///    - The probe worked in the game: "markers: ECOTI thermal state: read from Coti.Client.CotiState.Active",
         ///      and the goggles' thermal went on 6 times and off 5 times in the log, the IR strobe hidden and shown
         ///      again with it. No v13 falsifier on the probe or the hiding fired. The user: "The two markers are
         ///      correctly differentiated now."
         ///    - "Timing: carry bot markers" was on: 737,270 calls in 265,553 frames, 2.79 s in all (0.08% of the
-        ///      3,693 s raid), mean 0.00 ms a call, worst call and worst frame 0.4 ms (falsifier 1 ms a frame, not fired).
+        ///      3,693 s the log clock covers, paused time included), mean 0.00 ms a call, worst call and worst frame
+        ///      0.4 ms (falsifier 1 ms a frame, not fired).
         ///      No "markers: switched off" line and no exception naming MCS or the fork (676 errors.log entries, none
         ///      about MCS or the fork).
         ///    - The IR strobe is "nearly there": the 1 m reach is fine, but it is "too dim to notice unless you're looking
@@ -523,8 +526,12 @@ namespace MiyakoCarryService.Client.C2Sain
         ///      visibly part of the body. Their proposal, a tall pole from the body like the flag pole on some shopping
         ///      carts with a barber's pole pattern and a choice of designs in F12, is v14.
         ///    - Also reported, for the bot behavior session (not changed here): the bot struggles to decide to keep up
-        ///      with the player on the move (log: 53% of the raid in Mcs:TooFar, 33 Default-TooFar flips at 8-9 m, a
-        ///      7 s lag before following from TooClose, standing still in TooFar at 30-146 m).
+        ///      with the player on the move. That session's diagnosis is evidence/2026-11-18-build-13-first-raid/
+        ///      keep-up-analysis.txt. The first count passed on, "53% of the raid in Mcs:TooFar", included the
+        ///      25.9-minute pause; without it TooFar was 71% of the 9.8 minutes the bot spent following. The
+        ///      stop-and-go (33 entries into TooFar at 8-9 m, 28 exits at 3-8 m) is the follow rules in place since fork
+        ///      v1, not builds 11-13: 34 entries per 10 minutes of following against 7.5-81 on builds 7-11. The 7 s lag
+        ///      before following from TooClose, the teleports and the 12 stands far behind are in that file.
         /// 14 (2026-11-18) Test build 14: the carry bot markers again, after the user's first test of build 13.
         ///    Measured before it: the Result of v13 above and the second Result of v12 (the first indoor plans in
         ///    the game). Markers only: no decision or timing a bot has changed.

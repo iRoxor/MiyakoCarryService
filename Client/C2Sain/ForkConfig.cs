@@ -57,15 +57,22 @@ namespace MiyakoCarryService.Client.C2Sain
         public static ConfigEntry<bool> SayIHearSomething;
         public static ConfigEntry<float> PlannerBudgetMs;
         public static ConfigEntry<bool> StrobeThermal;
+        public static ConfigEntry<Core.ThermalDesign> ThermalDesign;
+        public static ConfigEntry<float> StrobeThermalPeriod;
+        public static ConfigEntry<float> StrobeThermalHeat;
+        public static ConfigEntry<float> PoleLength;
+        public static ConfigEntry<float> PoleWidth;
+        public static ConfigEntry<bool> PoleWidenAtRange;
+        public static ConfigEntry<float> MarkerHeight;
+        public static ConfigEntry<float> BeaconSize;
         public static ConfigEntry<bool> StrobeIr;
         public static ConfigEntry<bool> IrHideUnderEcoti;
         public static ConfigEntry<Core.IrPattern> StrobeIrPattern;
-        public static ConfigEntry<float> StrobeThermalPeriod;
-        public static ConfigEntry<float> StrobeThermalHeat;
-        public static ConfigEntry<float> MarkerHeight;
-        public static ConfigEntry<float> BeaconSize;
         public static ConfigEntry<float> IrBrightness;
         public static ConfigEntry<float> IrRadius;
+        public static ConfigEntry<Core.IrColor> IrLightColor;
+        public static ConfigEntry<float> IrHeight;
+        public static ConfigEntry<int> SettingsVersion;
         public static ConfigEntry<bool> CostPlanner;
         public static ConfigEntry<bool> CostDefend;
         public static ConfigEntry<bool> CostFlank;
@@ -133,20 +140,28 @@ namespace MiyakoCarryService.Client.C2Sain
             FollowFootstepRange = Float(plugin, "FollowFootstepRange", 30f, 0f, 70f);
             SayIHearSomething = Bool(plugin, "SayIHearSomething", true);
             PlannerBudgetMs = Float(plugin, "PlannerBudget", 3f, 0.5f, 30f);
+            // The thermal marker's settings, then the IR strobe's. Fork v13 renamed four of them (MarkerHeight was
+            // StrobeHeight, BeaconSize was StrobeSize, IrBrightness was StrobeIrIntensity, IrRadius was StrobeIrRange;
+            // the old entries stay in the file, unread). Fork v14 keeps every v13 key and moves changed defaults with
+            // MigrateDefaults instead of renaming again.
             StrobeThermal = Bool(plugin, "StrobeThermal", true);
+            ThermalDesign = Enum(plugin, "ThermalDesign", Core.ThermalDesign.BarberPole);
+            StrobeThermalPeriod = Float(plugin, "StrobeThermalPeriod", 1f, 0.5f, 10f);
+            StrobeThermalHeat = Float(plugin, "StrobeThermalHeat", 65f, 30f, 120f);
+            PoleLength = Float(plugin, "PoleLength", 1f, 0.2f, 3f);
+            PoleWidth = Float(plugin, "PoleWidth", 0.08f, 0.02f, 0.5f);
+            PoleWidenAtRange = Bool(plugin, "PoleWidenAtRange", true);
+            MarkerHeight = Float(plugin, "MarkerHeight", 0.18f, 0.05f, 1.5f);
+            BeaconSize = Float(plugin, "BeaconSize", 0.15f, 0.05f, 0.8f);
             StrobeIr = Bool(plugin, "StrobeIr", true);
             IrHideUnderEcoti = Bool(plugin, "IrHideUnderEcoti", true);
             StrobeIrPattern = Enum(plugin, "StrobeIrPattern", Core.IrPattern.DoubleFlash);
-            StrobeThermalPeriod = Float(plugin, "StrobeThermalPeriod", 2f, 0.5f, 10f);
-            StrobeThermalHeat = Float(plugin, "StrobeThermalHeat", 65f, 30f, 120f);
-            // Fork v13 renamed these four so their new defaults reach installs that already hold v12's values (a
-            // BepInEx entry keeps the value in the file): MarkerHeight was StrobeHeight (0.4), BeaconSize was
-            // StrobeSize (0.22), IrBrightness was StrobeIrIntensity (1.5) and IrRadius was StrobeIrRange (6). The
-            // old entries stay in the file, unread.
-            MarkerHeight = Float(plugin, "MarkerHeight", 0.24f, 0.05f, 1.5f);
-            BeaconSize = Float(plugin, "BeaconSize", 0.15f, 0.05f, 0.8f);
-            IrBrightness = Float(plugin, "IrBrightness", 3f, 0.1f, 20f);
+            IrBrightness = Float(plugin, "IrBrightness", 12f, 0.1f, 50f);
             IrRadius = Float(plugin, "IrRadius", 1f, 0.2f, 20f);
+            IrLightColor = Enum(plugin, "IrColor", Core.IrColor.White);
+            IrHeight = Float(plugin, "IrHeight", 0.32f, 0.05f, 1.5f);
+            SettingsVersion = plugin.Register(SECTION, SECTION_ORDER, "McsFork/SettingsVersion Key", 0, "McsFork/SettingsVersion Description",
+                new AcceptableValueRange<int>(0, 1000), new ConfigurationManagerAttributes { Browsable = false }, needNotify: false);
             CostPlanner = Bool(plugin, "CostPlanner", false);
             CostDefend = Bool(plugin, "CostDefend", false);
             CostFlank = Bool(plugin, "CostFlank", false);
@@ -157,6 +172,40 @@ namespace MiyakoCarryService.Client.C2Sain
             CostStrobe = Bool(plugin, "CostStrobe", false);
             CostThresholdMs = Float(plugin, "CostThreshold", 2f, 0.5f, 50f);
             DebugLog = Bool(plugin, "DebugLog", false);
+            MigrateDefaults();
+        }
+
+        /// <summary>The settings version this build writes into the hidden SettingsVersion entry; raise it when a default changes.</summary>
+        private const int SETTINGS_VERSION = 14;
+
+        /// <summary>
+        /// BepInEx keeps the value already in the config file when a build changes a setting's default, so a new default
+        /// never reaches an install that holds the old one, and a rename (what fork v13 did) leaves the old entry behind
+        /// in the file. Instead, once per settings version, a setting whose file value still equals its OLD default (the
+        /// user never moved it) is set to the NEW default; a value the user changed is never touched. Fork v14: IrBrightness
+        /// 3 to 12 (the strobe was too dim) and StrobeThermalPeriod 2 to 1 (the pole's patterns read better quicker).
+        /// A user who had set exactly the old value by choice sees it change once. Side effect: writes the config file
+        /// when it moves a value, and records the version in the hidden SettingsVersion entry. Called at the end of
+        /// <see cref="Bind"/>.
+        /// </summary>
+        private static void MigrateDefaults()
+        {
+            if (SettingsVersion.Value >= SETTINGS_VERSION)
+            {
+                return;
+            }
+            MoveDefault(IrBrightness, 3f, 12f);
+            MoveDefault(StrobeThermalPeriod, 2f, 1f);
+            SettingsVersion.Value = SETTINGS_VERSION;
+        }
+
+        /// <summary>Sets <paramref name="entry"/> to <paramref name="newDefault"/> when it still holds <paramref name="oldDefault"/>.</summary>
+        private static void MoveDefault(ConfigEntry<float> entry, float oldDefault, float newDefault)
+        {
+            if (System.Math.Abs(entry.Value - oldDefault) < 0.0001f)
+            {
+                entry.Value = newDefault;
+            }
         }
 
         /// <summary>Registers one float setting named McsFork/&lt;name&gt; Key.</summary>

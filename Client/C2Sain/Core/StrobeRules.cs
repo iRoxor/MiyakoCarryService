@@ -1,5 +1,6 @@
 // StrobeRules.cs -- the timing and visibility rules of the carry bots' two markers (fork v12; v13 shortened
-// the IR flashes and keeps the IR light off while ECOTI's thermal view is on the goggles).
+// the IR flashes and keeps the IR light off while ECOTI's thermal view is on the goggles; v14 moved the thermal
+// marker's looks to PoleDesigns.cs and gave the IR light a colour).
 //
 // Used by C2Sain/StrobeMarkers.cs, which makes the markers and applies these rules every frame.
 // Unity-free so the logic harness (.for-claude-to-reference/harnesses/mcs_fork_logic) can pin the
@@ -8,17 +9,18 @@
 // Why: through ECOTI's thermal clip-on a carry bot is a hot body like any enemy, because ECOTI never
 // looks at a player's side, group or team (its code reads none; no setting changes it). The fork, which
 // makes the teammates, marks them instead, with two markers that only the matching view shows:
-//   - the thermal ID beacon: a small solid marker on the helmet whose heat value pulses between hot and
-//     cold, as if a rotating heated element sat inside it. It carries a heat value ECOTI's heat shader
+//   - the thermal ID marker: a tall pole on the helmet (or, in the Box design, a small box) whose hot
+//     sections move in a pattern (Core/PoleDesigns.cs). It carries a heat value ECOTI's heat shader
 //     reads (_CotiHeatTemp, Kelvin) and is drawn only while one of ECOTI's thermal cameras (named
 //     "Coti...") renders, so the naked eye and night vision never see it. No real thermal device strobes,
-//     so this is a pulse, not a flash.
-//   - the IR strobe: a small red light on the helmet that flashes quickly in a pattern (the double flash by
+//     so this is a moving pattern, not a flash.
+//   - the IR strobe: a small light on the helmet that flashes quickly in a pattern (the double flash by
 //     default) and shines only while night vision is on and ECOTI's thermal view is not (a thermal view
 //     cannot see an IR light). StrobeMarkers switches the light itself, so its brightness and reach are the
 //     F12 settings' own, whatever BorkelRNVG multiplies for the game's IR flashlights.
 // The research behind it: miyako-carry-service/evidence/2026-11-18-coti-heat-research. The user's first test of
-// build 12 (miyako-carry-service/evidence/2026-11-18-build-12-first-raid) led to the v13 changes.
+// build 12 (miyako-carry-service/evidence/2026-11-18-build-12-first-raid) led to the v13 changes, and their first
+// test of build 13 (miyako-carry-service/evidence/2026-11-18-build-13-first-raid) to v14's.
 
 using System;
 
@@ -40,7 +42,7 @@ namespace MiyakoCarryService.Client.C2Sain.Core
         Steady = 3,
     }
 
-    /// <summary>Tunables for <see cref="StrobeRules"/>; the plugin sets the thermal period and heat and whether the IR strobe hides under ECOTI from its settings.</summary>
+    /// <summary>Tunables for <see cref="StrobeRules"/>, <see cref="PoleDesigns"/> and <see cref="PoleGeometry"/>; the plugin sets the thermal period and whether the IR strobe hides under ECOTI from its settings.</summary>
     public sealed class StrobeSettings
     {
         /// <summary>Seconds in one cycle of the double flash.</summary>
@@ -70,29 +72,48 @@ namespace MiyakoCarryService.Client.C2Sain.Core
         /// <summary>Seconds in one cycle of the fast blink (half on, half off).</summary>
         public double FastBlinkPeriod = 0.25;
 
-        /// <summary>Seconds between the thermal beacon's hot peaks.</summary>
-        public double ThermalPeriod = 2.0;
+        /// <summary>
+        /// Seconds one cycle of the thermal design takes (the F12 "thermal pattern period"): the barber pole slides its
+        /// bands up by one stripe, the rising pulse makes one climb, the blinking designs one hot half and one dark half.
+        /// Build 12 and 13 used 2 s for the beacon's pulse; the pole's patterns read better a little quicker.
+        /// </summary>
+        public double ThermalPeriod = 1.0;
 
-        /// <summary>The thermal beacon's hottest temperature (Celsius). 65 is far above any air temperature, so ECOTI draws it at full brightness.</summary>
-        public double HotCelsius = 65.0;
+        /// <summary>Stripes (one hot band and one gap each) along the pole in the barber pole design: 3 gives bands about 0.17 m long on a 1 m pole.</summary>
+        public int BarberStripes = 3;
+
+        /// <summary>The share of each barber pole stripe that is hot; the rest is the gap.</summary>
+        public double BarberHotShare = 0.5;
+
+        /// <summary>Length of the hot band of the rising pulse, as a fraction of the pole.</summary>
+        public double RisingBandLength = 0.25;
+
+        /// <summary>The share of each rising pulse cycle spent climbing; the rest is a dark pause before the next climb.</summary>
+        public double RisingTravelShare = 0.7;
+
+        /// <summary>The share of each cycle the blinking designs (pole pulse, flag, box) are hot: half, so they are dark for as long as they are lit.</summary>
+        public double BlinkHotShare = 0.5;
+
+        /// <summary>Length of the flag at the top of the flag design, as a fraction of the pole.</summary>
+        public double FlagLength = 0.15;
+
+        /// <summary>How many times wider than the pole the flag is drawn.</summary>
+        public double FlagWidthScale = 3.0;
 
         /// <summary>
-        /// The thermal beacon's coldest temperature (Celsius). At or below the air temperature plus 1 degree ECOTI
-        /// draws it cold (black), which is the "cold" half of the pulse. -30 keeps the hot and cold halves of the
-        /// pulse about equal at 15 degrees air, and stays cold in any weather the game has.
+        /// The narrowest the pole may look from the player, in radians, when it widens at range: 0.0016 is about one and
+        /// a half rows of ECOTI's picture (a row is roughly 0.0008 to 0.0011 rad: its picture is about a thousand rows
+        /// tall over a 50 to 75 degree field, estimated, see the research file), enough that it does not flicker out.
         /// </summary>
-        public double ColdCelsius = -30.0;
+        public double MinPoleAngle = 0.0016;
+
+        /// <summary>The widest the pole gets when it widens at range, in metres (0.16 m at 100 m, 0.32 m at 200 m, then this).</summary>
+        public double MaxPoleWidth = 0.5;
     }
 
     /// <summary>The markers' rules; see the file header.</summary>
     public static class StrobeRules
     {
-        /// <summary>
-        /// ECOTI's heat shader draws a renderer hot only when its heat is more than this many degrees Celsius
-        /// above the air (read from the shader's disassembled Opaque fragment, fork research 2026-11-18).
-        /// </summary>
-        public const double ECOTI_HOT_ABOVE_AIR = 1.0;
-
         /// <summary>True while the IR strobe's light is in a flash at <paramref name="seconds"/> (any monotonic game time, negative allowed).</summary>
         public static bool IrLit(IrPattern pattern, double seconds, StrobeSettings settings)
         {
@@ -108,41 +129,6 @@ namespace MiyakoCarryService.Client.C2Sain.Core
                 default:
                     return true;
             }
-        }
-
-        /// <summary>
-        /// The thermal beacon's temperature (Celsius) at <paramref name="seconds"/>: a smooth pulse from
-        /// <see cref="StrobeSettings.ColdCelsius"/> at the start of each period up to
-        /// <see cref="StrobeSettings.HotCelsius"/> halfway through it and back.
-        /// </summary>
-        public static double ThermalCelsius(double seconds, StrobeSettings settings)
-        {
-            var share = 0.5 - 0.5 * Math.Cos(2.0 * Math.PI * Wrap(seconds, settings.ThermalPeriod) / settings.ThermalPeriod);
-            return settings.ColdCelsius + (settings.HotCelsius - settings.ColdCelsius) * share;
-        }
-
-        /// <summary>
-        /// The share of each period (0 to 1) that ECOTI draws the thermal beacon hot at the given air temperature:
-        /// the time its temperature is more than <see cref="ECOTI_HOT_ABOVE_AIR"/> degrees above the air. Under
-        /// 1 means the beacon does go cold; the harness requires it to for every air temperature the game has.
-        /// </summary>
-        public static double ThermalHotShare(double airCelsius, StrobeSettings settings)
-        {
-            var range = settings.HotCelsius - settings.ColdCelsius;
-            if (range <= 0.0)
-            {
-                return settings.HotCelsius > airCelsius + ECOTI_HOT_ABOVE_AIR ? 1.0 : 0.0;
-            }
-            var needed = (airCelsius + ECOTI_HOT_ABOVE_AIR - settings.ColdCelsius) / range;
-            if (needed <= 0.0)
-            {
-                return 1.0;
-            }
-            if (needed >= 1.0)
-            {
-                return 0.0;
-            }
-            return 1.0 - Math.Acos(1.0 - 2.0 * needed) / Math.PI;
         }
 
         /// <summary>
@@ -164,7 +150,7 @@ namespace MiyakoCarryService.Client.C2Sain.Core
             return cameraName != null && cameraName.StartsWith("Coti", StringComparison.Ordinal);
         }
 
-        /// <summary>The thermal beacon is drawn only for ECOTI's thermal cameras, and only while its switch is on.</summary>
+        /// <summary>The thermal marker is drawn only for ECOTI's thermal cameras, and only while its switch is on.</summary>
         public static bool BeaconShows(bool cameraIsThermal, bool thermalSwitchOn)
         {
             return cameraIsThermal && thermalSwitchOn;

@@ -438,6 +438,20 @@ namespace MiyakoCarryService.Client.C2Sain
         ///      quick flash; it was still seen with ECOTI's thermal on the goggles; and the beacon hung above the
         ///      character instead of sitting on it (0.4 m above the head bone; a helmet's top is about 0.2 m above
         ///      it, from the screenshots).
+        ///    Second result (2026-11-18, the user's raid with v13, whose planner is v12's: Interchange, 61 minutes, one
+        ///    carry bot; evidence/2026-11-18-build-13-first-raid): the first indoor plans in the game. 219 plans with
+        ///    timing, 201 indoors and 18 outdoors. Indoors: work median 33 ms (max 53), 13 frames (max 24), worst
+        ///    frame median 3.2 ms (max 7.4), ready 0.26 s after it was asked for (max 0.46). All 219: worst frame p99
+        ///    4.2 ms; ready median 0.25 s, p99 0.43 s.
+        ///    - The first falsifier FIRED once: one plan's worst frame passed 6 ms (7.4 ms at 06:18, an indoor plan
+        ///      that took 52 ms in 18 frames), 1 of 219. Not acted on in v14: v14 changes no decision or timing a
+        ///      bot has, so the keep-up report from the same raid (sent to the bot behavior session) is not
+        ///      confounded. The step sizes come down in a later build if that session finds the planner involved or the
+        ///      6 ms frames recur.
+        ///    - Not fired: the median "ready after" is 0.25 s (falsifier 0.4 s), though 10 of 219 plans (4.6%) took
+        ///      longer than 0.4 s, the longest 0.46 s; indoor guard places without a post were 8 of 201 (4%; falsifier
+        ///      14%). Bots standing on their old posts for more than half a second after the player stopped: not
+        ///      measured. No plan job exception and no "markers: switched off" line.
         /// 13 (2026-11-18) Test build 13: the carry bot markers, after the user's first test of build 12.
         ///    Measured before it: the Result of v12 above, with ECOTI 3.5.1's code (Coti.Client.dll IL) and
         ///    BorkelRNVG's (IkLightAwakePatch), both read 2026-11-18.
@@ -487,11 +501,89 @@ namespace MiyakoCarryService.Client.C2Sain
         ///      lost (the user's eye), changes MarkerHeight; a beacon too small to see through ECOTI at 100 m
         ///      changes BeaconSize;
         ///    - a "markers: switched off ... after an error" line is a bug to fix before anything else.
-        ///    Measured: nothing yet (no raid has run v13).
+        ///    Result (2026-11-18, the user's first raid with v13: Interchange, 61 minutes, one carry bot, a GPNVG-18
+        ///    with ECOTI in Outline mode; evidence/2026-11-18-build-13-first-raid):
+        ///    - The probe worked in the game: "markers: ECOTI thermal state: read from Coti.Client.CotiState.Active",
+        ///      and the goggles' thermal went on 6 times and off 5 times in the log, the IR strobe hidden and shown
+        ///      again with it. No v13 falsifier on the probe or the hiding fired. The user: "The two markers are
+        ///      correctly differentiated now."
+        ///    - "Timing: carry bot markers" was on: 737,270 calls in 265,553 frames, 2.79 s in all (0.08% of the
+        ///      3,693 s raid), mean 0.00 ms a call, worst call and worst frame 0.4 ms (falsifier 1 ms a frame, not fired).
+        ///      No "markers: switched off" line and no exception naming MCS or the fork (676 errors.log entries, none
+        ///      about MCS or the fork).
+        ///    - The IR strobe is "nearly there": the 1 m reach is fine, but it is "too dim to notice unless you're looking
+        ///      very hard for it". The first v13 falsifier fired in its "up" direction (brightness 3 was too low). The
+        ///      user's config also held MarkerHeight 0.18 by the end of the session (default 0.24), which put the IR
+        ///      light, which rode at the same height, inside the helmet (a helmet's top is about 0.2 m above the head
+        ///      bone), where a point light lights hardly anything; the cause of the dimness is therefore two things at
+        ///      once and cannot be separated from this raid.
+        ///    - The thermal beacon "is a bit hard to recognize due to its position above the head and its misalignment
+        ///      with the skeleton", after the user had lowered MarkerHeight to 0.18. The v13 falsifier "the beacon still
+        ///      hanging clear above the helmet" fired in spirit: the fix is not another height but a marker that is
+        ///      visibly part of the body. Their proposal, a tall pole from the body like the flag pole on some shopping
+        ///      carts with a barber's pole pattern and a choice of designs in F12, is v14.
+        ///    - Also reported, for the bot behavior session (not changed here): the bot struggles to decide to keep up
+        ///      with the player on the move (log: 53% of the raid in Mcs:TooFar, 33 Default-TooFar flips at 8-9 m, a
+        ///      7 s lag before following from TooClose, standing still in TooFar at 30-146 m).
+        /// 14 (2026-11-18) Test build 14: the carry bot markers again, after the user's first test of build 13.
+        ///    Measured before it: the Result of v13 above and the second Result of v12 (the first indoor plans in
+        ///    the game). Markers only: no decision or timing a bot has changed.
+        ///    Changed:
+        ///    - The thermal marker is a tall thin pole standing on the helmet (setting PoleLength, default 1 m; the foot is
+        ///      MarkerHeight above the head bone, default 0.18, the user's own tuned value), so it is visibly part of the
+        ///      body instead of a box floating above it. ECOTI's heat shader draws a renderer hot or not at all and its
+        ///      overlay shows every hot pixel at full strength (research B2), so a design is only where the pole is hot at
+        ///      each moment. The pole is at most six small hexagonal boxes (C2Sain/ThermalPole.cs), one per hot
+        ///      section, switched on only for ECOTI's thermal cameras as before; a section that is not hot is not drawn.
+        ///    - Seven designs, chosen in F12 (setting ThermalDesign), computed in Core/PoleDesigns.cs: BarberPole (the
+        ///      default: three hot bands, each a sixth of the pole, slide up it, a stripe a cycle), RisingPulse (one band
+        ///      of a quarter of the pole climbs in 70% of the cycle, then a dark pause), SeeSaw (lower and upper halves
+        ///      take turns), PolePulse (the whole pole hot for half the cycle), Flag (a steady pole with a flag of 0.15
+        ///      of its length, three times as wide, blinking at the top), SteadyPole, and Box (build 13's small box,
+        ///      for comparison). One cycle is StrobeThermalPeriod seconds (default 1; v13's pulse was 2 s).
+        ///    - The pole widens with distance (setting PoleWidenAtRange, default on) so it is never thinner than about
+        ///      0.0016 rad from the player, roughly a pixel and a half of ECOTI's picture: 0.16 m at 100 m, at most
+        ///      0.5 m. The width at close range is PoleWidth (0.08 m). The 0.0016 and the picture's size (about 1,000
+        ///      rows over 50-75 degrees, so a row of 0.0008-0.0011 rad) are estimates from the research, not measured.
+        ///    - The IR strobe is white (setting IrColor; White default, Red is v13's), with brightness 12 (v13: 3), and
+        ///      its light is ForcePixel, so Unity cannot demote it to a vertex light near other lights. It has its own
+        ///      height, IrHeight (default 0.32 m above the head bone, a little over a helmet's top), instead of riding at
+        ///      the pole's height. Reach (1 m, the user: "the radius is fine") and the 0.05 s double flash are unchanged.
+        ///      The sizes are estimates: at the same distance and reach, brightness 12 lights a surface 4 times as
+        ///      strongly as 3 does, and white carries about three times the luminance of red if night vision weighs
+        ///      colour channels as a luminance does (not verified for BorkelRNVG), so about 13 times v13's red 3 at
+        ///      most; the light also sits 0.14 m higher, clear of the helmet.
+        ///    - Defaults that changed reach existing installs by a one-time migration instead of another rename:
+        ///      ForkConfig.MigrateDefaults moves IrBrightness from 3 to 12 and StrobeThermalPeriod from 2 to 1 when the
+        ///      file still holds the old default, once (hidden setting SettingsVersion, 14). A value anyone changed is
+        ///      left alone; a user who had set exactly 3 by choice sees it change once.
+        ///    - Removed: the smooth hot-and-cold pulse model (StrobeRules.ThermalCelsius and ThermalHotShare, the cold
+        ///      temperature setting). The shader and overlay make heat all or nothing, so v13's pulse was always an
+        ///      on-off blink whose duty cycle changed with the air temperature (about 51% at 15 C, 41% at 30 C); the
+        ///      designs now say plainly when a section is hot.
+        ///    Diagnostics: the "markers: made for ..." line now reads "thermal BarberPole 1 m tall on layer 8, skin
+        ///    shader ..., IR strobe (brightness 12, reach 1 m, White, 0.32 m up)" (v13: "thermal beacon on layer 8 ...").
+        ///    No record field was repurposed; the summary tool prints the text after the colon unchanged.
+        ///    Pooling: UNRESTRICTED for everything v12 and v13 measure. No decision a bot makes changed, and the
+        ///    markers' log lines keep their shape.
+        ///    Falsifiers (written before any v14 raid):
+        ///    - the IR flash still too dim to notice at ordinary follow distances (10-30 m) through night vision
+        ///      with the new brightness and white light (the user's eye) means the light is not the way: next is a glow
+        ///      sprite on the helmet (a flare that does not depend on lit surfaces), not a bigger reach;
+        ///    - the IR flash lighting the ground or walls round the bot like a lamp again sends IrBrightness down;
+        ///    - any sign of the white IR light with night vision off (the naked-eye check, never reported for v12 or
+        ///      v13) means the gate is wrong: back to red and tighten it;
+        ///    - no pole through ECOTI at all while the Box design shows (check the "made for" line first), or a pole
+        ///      that flickers or vanishes beyond about 60 m with widening on (MinPoleAngle too small), or one that does
+        ///      not look attached to the head (MarkerHeight), each sends that value back;
+        ///    - a design that reads like an enemy's heat, or one the user cannot follow, is dropped from the list;
+        ///    - "Timing: carry bot markers" showing 1 ms or more a frame sends the per-camera step back (v13: 0.4 ms
+        ///      worst); a "markers: switched off ... after an error" line is a bug to fix before anything else.
+        ///    Measured: nothing yet (no raid has run v14).
         /// </summary>
-        public const int ForkVersion = 13;
+        public const int ForkVersion = 14;
 
         /// <summary>Short label used in logs and the overlay.</summary>
-        public const string Label = "C2/SAIN fork v13";
+        public const string Label = "C2/SAIN fork v14";
     }
 }

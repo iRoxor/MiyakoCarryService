@@ -257,6 +257,12 @@ namespace MiyakoCarryService.Client.C2Sain
         ///    Result (2026-11-09, its first raid, Lighthouse; evidence/2026-11-09-build-9-stuck-spawn):
         ///    no evidence either way. Every one of the raid's 15 guard plans was outdoors, so the indoor
         ///    planner never ran. That raid is the reason for v10.
+        ///    Result (2026-11-09, two Reserve raids with v11; evidence/2026-11-09-build-11-reserve): 229
+        ///    indoor approach plans, 176 used the approaches and 53 fell back to the even detail (30 open
+        ///    room, 10 no post found, 10 too few routes, 3 no way out found). About 12% of indoor guard
+        ///    places got no post (77 of 619 by the plan headers; falsifier at 14%). Median plan time 22 ms,
+        ///    max 33 (falsifier: a median over 30 ms). No v9 falsifier fired, but each plan ran inside one
+        ///    frame, 7-14 times a minute: that cost is what v12 spreads over frames.
         /// 10 (2026-11-09) Test build 10: bots stuck from spawn when the player stands off the navmesh.
         ///    Measured before it (evidence/2026-11-09-build-9-stuck-spawn, one Lighthouse raid ended by
         ///    Alt+F4): Infil spawned the player at point #13 ("Tunnel"). The 3 carry bots started 30 m away
@@ -336,10 +342,89 @@ namespace MiyakoCarryService.Client.C2Sain
         ///      longer following the player out of combat, sends the leash or the C2 gate change back;
         ///    - the user finding Defensive fights noticeably different from v10 (other than no grenades
         ///      and every bot on Normal) means a v11 change leaked into Defensive.
+        ///    Result (2026-11-09, two Reserve raids with v11; evidence/2026-11-09-build-11-reserve): the
+        ///    user found Defensive and Aggressive working; Passive was not tried (no "passive:" line). All
+        ///    16 squad stance orders applied (Aggressive from 05:18 to 16:15 in one raid, from 22:08 in the
+        ///    other). The grenade patch held 6 throws, 2 for each of the 3 bots, in Defensive. All 27 chases
+        ///    cut were in Defensive, at 43 m or less; none was cut in Aggressive, which logs a cut only past
+        ///    its 100 m leash. Three carry bots died (13:39 in one raid; 06:43 and 22:20 in the other). No
+        ///    v11 falsifier fired. The same raids' stutter check is what led to v12.
+        /// 12 (2026-11-18) Test build 12: the guard planner stops holding a frame, the fork times its own
+        ///    work, and carry bots wear markers that show in ECOTI's thermal view and in night vision.
+        ///    Measured before it:
+        ///    - Two Reserve raids with v11 (evidence/2026-11-09-build-11-reserve; the user felt
+        ///      micro-stutters at fight moments): 229 indoor plans, median 22 ms, max 33, each inside one
+        ///      frame (a frame holds 16-25 ms), 7-14 a minute while the squad guarded or fought, mostly
+        ///      from the player moving 4 m.
+        ///    - The Frame Hitch Recorder's five record files (stutter-investigation/evidence, 2026-11-11 to
+        ///      2026-11-17). Seven calls of MiyakoCarryServiceClient.Update took 40 ms or more (43-177 ms).
+        ///      All came 91-1438 s into a raid, none at its start, so CommandMgr.OnRaidStarted's navmesh
+        ///      triangulation is not the cause; each sat in a frame with exactly one garbage collection (the
+        ///      managed heap shrank 24-738 MB). That Update is four per-frame methods of the plugin
+        ///      (GameLoop, CommandMgr, FormationDataMgr, HighlightMgr), so it says a collection began
+        ///      there, not that the fork's code was slow. Nine BotOwner.UpdateManual calls of 20 ms or more
+        ///      on carry bots: five in load frames of 475-747 ms (bots spawning), two with a collection in
+        ///      the frame (86 and 108 ms) and two in ordinary frames, 26.7 ms (Woods, 2079 s; no guard plan
+        ///      in the fork's log within a minute either side, so not the planner) and 46.1 ms (Lighthouse,
+        ///      198 s; the diagnostic log was off). Nothing in the records ties a carry bot's long update to
+        ///      the planner; the timing below is how to find out.
+        ///    Changed:
+        ///    - The guard planner is made in small steps (GuardPlanner.PlanSteps) that TeamModes.Pump runs
+        ///      3 ms a frame, called from GameLoop.Update (setting "Guard: planning time per frame";
+        ///      Core/PlanSlicer.cs, Core/PlanScheduler.cs). Until the finished plan arrives (7-9 frames for
+        ///      an indoor plan by the planner harness's cost model, not measured) the bots keep their
+        ///      posts, or follow the player where there are none. A plan job keeps its own lists, so a Defend
+        ///      Me plan made between two of its steps cannot disturb it. Every decision is v9-v11's: the
+        ///      planner harness (harnesses/mcs_fork_planner) runs build 11's planner and this one on the same
+        ///      fake worlds and random numbers and requires identical posts (158 scenarios, four ways each,
+        ///      also interleaved with other plans), and its mutation runner proves the harness fails when a
+        ///      decision or the isolation is broken. Defend Me plans and shifts are still made in one frame.
+        ///    - The fork times its own heavy work per frame (Core/FrameCost.cs, C2Sain/ForkCost.cs): the
+        ///      planner's slices, Defend Me plans and shifts, the flank spot search, the closest-reachable
+        ///      fallback, follow-spot picks, the two Harmony patches that run inside SAIN every frame (bush
+        ///      sight, decision filter) and the markers. Each has its own F12 switch ("Timing: ..."), off by
+        ///      default, and records only while the diagnostic log is on. The log gets each frame where the
+        ///      timed work reaches the threshold ("Timing: log frames over", 2 ms) and a summary when the
+        ///      raid ends. A call's time excludes the timed calls inside it. The frame number is Time.frameCount,
+        ///      the recorder's "frame" (give or take one).
+        ///    - Carry bots wear two markers (C2Sain/StrobeMarkers.cs, Core/StrobeRules.cs), each switched in
+        ///      F12 and both on by default, with no menu order (the user's choice): a thermal ID beacon over
+        ///      the head whose heat pulses hot and cold every 2 s (ECOTI reads no side or team; the beacon
+        ///      carries the heat value ECOTI's shader reads and is drawn only by ECOTI's thermal cameras),
+        ///      and an IR strobe light over the head that blinks in a double flash every 1.5 s and shines
+        ///      only with night vision on (EFT's IkLight, scaled by BorkelRNVG). ECOTI and its files are
+        ///      untouched.
+        ///    Diagnostics: the plan lines gain timing ("; 22 ms in 8 frame(s), worst frame 3.4 ms (scan 2.1,
+        ///    routes 17.4, posts 2.5), ready 0.15 s after it began" on an indoor plan's line, a "plan timing:"
+        ///    line on any other), "fork cost:" and "fork cost summary:" lines for the Timing switches that are
+        ///    on, and a "markers: made for ..." line per bot. The summary tool prints these from v12.
+        ///    Pooling: what bots decide pools with v9-v11, since the plans are the same. Two things differ:
+        ///    a plan reaches the bots up to about 0.3 s after it was asked for, and an indoor plan's time is
+        ///    now "N ms in F frame(s), worst frame W ms": N compares with the "; N ms" of v9-v11 (work), the
+        ///    worst frame is what a frame felt. Frame-time figures from before and after v12 are not
+        ///    comparable for the bots' own cost: the planner moved and the markers add objects.
+        ///    Falsifiers (written before any v12 raid):
+        ///    - a plan whose worst frame passes 6 ms in the log, or a timed planner frame of 6 ms or more
+        ///      with the planner switch on, sends the step sizes down;
+        ///    - bots standing on their old posts for more than half a second after the player stopped, a
+        ///      median "ready after" over 0.4 s, or indoor guard places without a post at 14% or more
+        ///      (v9-v11: 9-27%, 12% on Reserve) sends the budget up or the slicing back;
+        ///    - a "markers: switched off ... after an error" line, or any plan job exception in the log,
+        ///      is a bug to fix before anything else;
+        ///    - the first raid with the thermal switch on showing no dot over a carry bot through ECOTI means
+        ///      the heat-by-property route is wrong (check the "markers: made" line's layer and skin shader
+        ///      first); a dot seen with the naked eye or through plain night vision means the per-camera
+        ///      gating is wrong; a blink the user cannot tell from an enemy's heat means the pattern or size
+        ///      changes;
+        ///    - "Timing: carry bot markers" showing 1 ms or more a frame sends the per-camera step back;
+        ///    - a long frame (40 ms or more) inside a carry bot's UpdateManual in the recorder, with every
+        ///      Timing switch on and no "fork cost:" line at its frame number (give or take one), means the
+        ///      fork's cost is in something not timed: add that kind.
+        ///    Measured: nothing yet (no raid has run v12).
         /// </summary>
-        public const int ForkVersion = 11;
+        public const int ForkVersion = 12;
 
         /// <summary>Short label used in logs and the overlay.</summary>
-        public const string Label = "C2/SAIN fork v11";
+        public const string Label = "C2/SAIN fork v12";
     }
 }

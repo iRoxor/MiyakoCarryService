@@ -11,9 +11,16 @@
 // place, each guard only when its sector covers it (ShouldFaceThreat; fork v7
 // turned every guard toward it). It also owns each squad's
 // guard plan (GuardPlanner): McsGuardLayer asks GetGuardPost for its bot's post,
-// and the plan is remade when the player has moved REPLAN_MOVE m, a contact
-// report arrives or expires, or the number of living bots changes. BrainMgr.
-// OnRaidEnded calls Clear(). No MonoBehaviour is involved.
+// and the plan is remade when the player has moved 4 m (PlanScheduleSettings.
+// ReplanMove), a contact report arrives or expires, or the number of living bots
+// changes. Since fork v12 "remade" means a GuardPlanJob (GuardPlanner.BeginPlan)
+// that GameLoop.Update's call to Pump runs a few milliseconds per frame
+// (Core/PlanSlicer.cs, the "Guard: planning time per frame" setting) and delivers when it is
+// done; Core/PlanScheduler.cs decides, per squad, whether a request uses the plan in
+// force, starts a job, carries one on or restarts it. Until a job delivers, the bots
+// keep the plan in force (a bot it has no post for follows the player, as for any
+// bot a plan leaves without a post). BrainMgr.OnRaidEnded calls Clear(). No
+// MonoBehaviour is involved.
 // Defend Me (ForkCommands.DefendMe) places the machine's Defend zone through
 // StartDefend; Regroup ends it through CancelDefend, and so does the player
 // leaving the zone. While the zone exists McsGuardLayer asks GetDefendPost instead:
@@ -26,8 +33,8 @@
 // fight when you shoot" setting is on), and is released until the squad leaves combat.
 // Reads and writes no files; with "Debug: diagnostic log" on it writes mode
 // changes, every guard and Defend plan (each bot's post, its cover and the bot's
-// path to it, from GuardPlanner.DescribePost) and every Defend shift to the
-// BepInEx log.
+// path to it, from GuardPlanner.DescribePost, then one line with the plan's timing: the
+// indoor planner's own line, or "plan timing:") and every Defend shift to the BepInEx log.
 
 using System.Collections.Generic;
 using Comfort.Common;
@@ -49,9 +56,6 @@ namespace MiyakoCarryService.Client.C2Sain
 
         /// <summary>Seconds a recorded threat position stays useful for guards to look at.</summary>
         private const float THREAT_MEMORY = 10f;
-
-        /// <summary>Metres the player may move before the squad's guard plan is made again.</summary>
-        private const float REPLAN_MOVE = 4f;
 
         /// <summary>Seconds a contact report ("I see the enemy") stays the guards' focus.</summary>
         private const float REPORT_MEMORY = 30f;
@@ -116,6 +120,15 @@ namespace MiyakoCarryService.Client.C2Sain
             public GuardPlanState Plan;
             public GuardPlanState DefendPlan;
             public readonly PassiveGate Passive = new();
+
+            /// <summary>Fork v12: decides when the guard plan is made, kept, carried on or dropped (Core/PlanScheduler.cs).</summary>
+            public readonly PlanScheduler Schedule = new();
+
+            /// <summary>Fork v12: the guard plan being made a few milliseconds per frame by Pump, or null. Null whenever Schedule says no job is under way.</summary>
+            public GuardPlanJob Job;
+
+            /// <summary>Fork v12: the squad's lead, kept so Pump can deliver a finished plan outside any bot's request.</summary>
+            public McsAILeadPlayer Lead;
         }
 
         /// <summary>
@@ -139,6 +152,20 @@ namespace MiyakoCarryService.Client.C2Sain
         private static readonly TeamModeSettings _settings = new();
         private static readonly DefendShuffleSettings _shiftSettings = new();
         private static readonly StanceSettings _stanceSettings = new();
+
+        /// <summary>Fork v12: when a squad's guard plan is made, kept or dropped (Core/PlanScheduler.cs); defaults, never changed.</summary>
+        private static readonly PlanScheduleSettings _scheduleSettings = new();
+
+        /// <summary>Fork v12: the time budget per frame for plan jobs; Pump refreshes BudgetMs from the "Guard: planning time per frame" setting.</summary>
+        private static readonly SliceSettings _sliceSettings = new();
+
+        /// <summary>Fork v12: the entries Pump visits, copied first so nothing it calls can change the list it walks.</summary>
+        private static readonly List<Entry> _pumpEntries = new();
+
+        /// <summary>Fork v12: seconds between logs of an exception from a plan job (Time.time of the last one is _lastFaultLog).</summary>
+        private const float FAULT_LOG_INTERVAL = 30f;
+
+        private static float _lastFaultLog = -999f;
         private static McsMgr McsMgr => field ??= MgrAccessor.Get<McsMgr>();
 
         /// <summary>
@@ -422,7 +449,11 @@ namespace MiyakoCarryService.Client.C2Sain
                         _otherPosts.Add(pair.Value);
                     }
                 }
-                var shifted = GuardPlanner.ShiftDefend(player.Position, player.LookDirection, post, bot.Position, _members.Count, threat, IsIndoors(player), _otherPosts);
+                GuardPost shifted;
+                using (ForkCost.Begin(CostKind.Defend))
+                {
+                    shifted = GuardPlanner.ShiftDefend(player.Position, player.LookDirection, post, bot.Position, _members.Count, threat, IsIndoors(player), _otherPosts);
+                }
                 _otherPosts.Clear();
                 if (shifted != null)
                 {
@@ -448,9 +479,17 @@ namespace MiyakoCarryService.Client.C2Sain
         {
             var state = new GuardPlanState { Anchor = player.Position, ReportId = reportId, BotCount = _members.Count };
             var indoors = IsIndoors(player);
-            var posts = GuardPlanner.PlanDefend(player.Position, player.LookDirection, _members.Count, threat, indoors);
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            List<GuardPost> posts;
+            using (ForkCost.Begin(CostKind.Defend))
+            {
+                posts = GuardPlanner.PlanDefend(player.Position, player.LookDirection, _members.Count, threat, indoors);
+            }
+            clock.Stop();
             AssignPosts(posts, state);
-            LogPlan("defend plan", player, indoors, posts, threat, heard, state);
+            // Fork v12: a Defend Me plan is still made in one frame; its timing line says how long that frame held.
+            LogPlan("defend plan", player, indoors, posts, threat, heard, state, null,
+                SliceReport.Format(SliceStats.OneFrame(clock.Elapsed.TotalMilliseconds, PlanPhase.Spots)));
             return state;
         }
 
@@ -468,9 +507,14 @@ namespace MiyakoCarryService.Client.C2Sain
         }
 
         /// <summary>
-        /// The post this bot should hold while guarding, from its squad's guard plan, which is made (or
-        /// made again) first when needed; see the file header. Null when the plan has no post for the bot
-        /// (the surroundings offered too few usable spots); the Guard layer then falls back to a follow spot.
+        /// The post this bot should hold while guarding, from its squad's guard plan in force. A request
+        /// that finds the plan missing or out of date (none yet, the player 4 m from where it was made,
+        /// another contact report, a different number of living bots) starts a plan job (PlanScheduler
+        /// decides); Pump runs it over the next few frames and then the new plan replaces the old. Until
+        /// then this answers from the plan in force; see the file header. Null when that plan has no post
+        /// for the bot (there is none yet, or the surroundings offered too few usable spots); the Guard
+        /// layer then falls back to a follow spot. Before fork v12 the plan was made right here, in the
+        /// bot's frame.
         /// </summary>
         /// <param name="lead">The player's MCS lead object.</param>
         /// <param name="bot">The carry bot asking.</param>
@@ -492,30 +536,113 @@ namespace MiyakoCarryService.Client.C2Sain
                 threat = reportPosition;
             }
 
-            var plan = entry.Plan;
-            if (plan == null || plan.ReportId != reportId || plan.BotCount != _members.Count
-                || Vector3.Distance(plan.Anchor, player.Position) > REPLAN_MOVE)
+            var at = player.Position;
+            var wanted = new PlanKey(reportId, _members.Count);
+            var request = entry.Schedule.Request(wanted, new V3(at.x, at.y, at.z), Time.time, _scheduleSettings);
+            if (request == PlanRequest.StartJob || request == PlanRequest.RestartJob)
             {
-                plan = entry.Plan = MakePlan(player, threat, reportId, threat.HasValue && entry.ReportHeard);
+                entry.Job = BeginJob(player, threat, wanted, threat.HasValue && entry.ReportHeard);
+            }
+            if (!entry.Schedule.HasJob)
+            {
+                entry.Job = null;
             }
             _members.Clear();
-            return plan.Posts.TryGetValue(bot.ProfileId, out var post) ? post : null;
+            return entry.Plan != null && entry.Plan.Posts.TryGetValue(bot.ProfileId, out var post) ? post : null;
+        }
+
+        /// <summary>Fork v12: starts a guard plan job for the player as they stand now. Plans nothing itself; Pump runs it.</summary>
+        private static GuardPlanJob BeginJob(Player player, Vector3? threat, PlanKey key, bool heard)
+        {
+            var minRange = ForkConfig.GuardPostMin?.Value ?? 3f;
+            var maxRange = Mathf.Max(minRange + 1f, ForkConfig.GuardPostMax?.Value ?? 12f);
+            return GuardPlanner.BeginPlan(player.Position, player.LookDirection, key, threat, IsIndoors(player), minRange, maxRange, heard, Time.time);
         }
 
         /// <summary>
-        /// Plans posts for the bots in _members and gives each the post that keeps the squad's total walk
-        /// shortest (GuardFormation.Assign). Logs the plan when debug logging is on.
+        /// Fork v12: gives every squad's guard plan job its slice of this frame (the "Guard: planning time per frame"
+        /// budget, Core/PlanSlicer.cs) and delivers the plan of a job that has finished. Called once a
+        /// frame by GameLoop.Update while a raid is on. Gives up a job nobody has asked about for a couple
+        /// of seconds (the squad left the guard layer). A job that throws is dropped and not retried for
+        /// 5 s; the exception goes to the BepInEx log at most once per 30 s. Writes the squad's plan in
+        /// force; with the diagnostic log on, logs the new plan.
         /// </summary>
-        private static GuardPlanState MakePlan(Player player, Vector3? threat, int reportId, bool heard)
+        internal static void Pump()
         {
-            var state = new GuardPlanState { Anchor = player.Position, ReportId = reportId, BotCount = _members.Count };
-            var indoors = IsIndoors(player);
-            var minRange = ForkConfig.GuardPostMin?.Value ?? 3f;
-            var maxRange = Mathf.Max(minRange + 1f, ForkConfig.GuardPostMax?.Value ?? 12f);
-            var posts = GuardPlanner.Plan(player.Position, player.LookDirection, _members.Count, threat, indoors, minRange, maxRange);
-            AssignPosts(posts, state);
-            LogPlan("guard plan", player, indoors, posts, threat, heard, state);
-            return state;
+            if (_entries.Count == 0)
+            {
+                return;
+            }
+            var now = Time.time;
+            _pumpEntries.Clear();
+            _pumpEntries.AddRange(_entries.Values);
+            foreach (var entry in _pumpEntries)
+            {
+                var job = entry.Job;
+                if (job == null)
+                {
+                    continue;
+                }
+                try
+                {
+                    using (ForkCost.Begin(CostKind.Planner))
+                    {
+                        if (!entry.Schedule.HasJob)
+                        {
+                            entry.Job = null;
+                        }
+                        else if (entry.Schedule.IsIdle(now, _scheduleSettings))
+                        {
+                            entry.Schedule.AbandonJob();
+                            entry.Job = null;
+                        }
+                        else
+                        {
+                            _sliceSettings.BudgetMs = ForkConfig.PlannerBudgetMs?.Value ?? 3f;
+                            job.RunFrame(_sliceSettings);
+                            if (job.Done)
+                            {
+                                Deliver(entry, job, now);
+                            }
+                        }
+                    }
+                }
+                catch (System.Exception e)
+                {
+                    entry.Schedule.Faulted(now, _scheduleSettings);
+                    entry.Job = null;
+                    if (now - _lastFaultLog > FAULT_LOG_INTERVAL)
+                    {
+                        _lastFaultLog = now;
+                        McsLogger.LogError(e);
+                    }
+                }
+            }
+            _pumpEntries.Clear();
+        }
+
+        /// <summary>
+        /// Fork v12: makes a finished job's posts the squad's plan in force, giving each living bot the post
+        /// that keeps the squad's total walk shortest (GuardFormation.Assign, with the bots where they stand
+        /// now), and logs the plan when debug logging is on, with how long it took.
+        /// </summary>
+        private static void Deliver(Entry entry, GuardPlanJob job, float now)
+        {
+            entry.Job = null;
+            var player = entry.Lead?.McsLeadPlayer;
+            if (player == null)
+            {
+                entry.Schedule.AbandonJob();
+                return;
+            }
+            FillMembers(player);
+            var state = new GuardPlanState { Anchor = job.Player, ReportId = job.Key.ReportId, BotCount = job.Key.BotCount };
+            AssignPosts(job.Posts, state);
+            entry.Plan = state;
+            entry.Schedule.Delivered();
+            var timing = SliceReport.Format(job.Stats) + System.FormattableString.Invariant($", ready {now - job.StartedAt:0.00} s after it began");
+            LogPlan("guard plan", player, job.Indoors, job.Posts, job.Threat, job.Heard, state, job.IndoorReport, timing);
+            _members.Clear();
         }
 
         /// <summary>Fills _members with the squad's living carry bots.</summary>
@@ -560,11 +687,17 @@ namespace MiyakoCarryService.Client.C2Sain
         /// Logs a plan when debug logging is on: a header ("guard plan for" or "defend plan for" the
         /// player, indoors or outdoors, posts per bots, and "facing a contact report" or "facing a heard sound"
         /// when the plan faces one) and one line per bot (GuardPlanner.DescribePost). Since fork v9 a
-        /// guard plan that tried indoor approaches ends with GuardPlanner.LastIndoorReport. Since fork
-        /// v10 a header with fewer posts than bots ends with OffMeshWatch.PlanNote when the player is
-        /// off the navmesh ("; you are off the navmesh (nearest walkable ground: 12 m)").
+        /// guard plan that tried indoor approaches ends with the indoor planner's line (GuardPlanJob.
+        /// IndoorReport). Since fork v10 a header with fewer posts than bots ends with OffMeshWatch.PlanNote
+        /// when the player is off the navmesh ("; you are off the navmesh (nearest walkable ground: 12 m)").
+        /// Since fork v12 the last line also says how long the plan took: the indoor line ends with
+        /// "; 22 ms in 8 frame(s), worst frame 3.4 ms (scan 2.1, routes 17.4, posts 2.5), ready 0.15 s after
+        /// it began" (it ended with "; 22 ms" before), and any other plan gets a "plan timing: ..." line
+        /// in the same words (a Defend Me plan, made in one frame, has no "ready").
         /// </summary>
-        private static void LogPlan(string what, Player player, bool indoors, List<GuardPost> posts, Vector3? threat, bool heard, GuardPlanState state)
+        /// <param name="indoorReport">The indoor planner's line without its timing, or null.</param>
+        /// <param name="timing">SliceReport.Format of the plan's cost, with the time to ready for a sliced plan.</param>
+        private static void LogPlan(string what, Player player, bool indoors, List<GuardPost> posts, Vector3? threat, bool heard, GuardPlanState state, string indoorReport, string timing)
         {
             if (ForkConfig.DebugLog?.Value != true)
             {
@@ -579,11 +712,15 @@ namespace MiyakoCarryService.Client.C2Sain
                 McsLogger.LogInfo($"[{ForkLog.Tag}]   {member.Profile?.Nickname}: "
                     + GuardPlanner.DescribePost(player.Position, player.LookDirection, member.Position, post));
             }
-            if (what == "guard plan" && GuardPlanner.LastIndoorReport != null)
+            // Fork v9: after the post lines, so log readers that end a plan's block at its first
+            // line without two leading spaces still read every post.
+            if (indoorReport != null)
             {
-                // Fork v9: after the post lines, so log readers that end a plan's block at its first
-                // line without two leading spaces still read every post.
-                McsLogger.LogInfo($"[{ForkLog.Tag}] {GuardPlanner.LastIndoorReport}");
+                McsLogger.LogInfo($"[{ForkLog.Tag}] {indoorReport}; {timing}");
+            }
+            else
+            {
+                McsLogger.LogInfo($"[{ForkLog.Tag}] plan timing: {timing}");
             }
         }
 
@@ -630,6 +767,7 @@ namespace MiyakoCarryService.Client.C2Sain
                 _entries[id] = entry;
             }
 
+            entry.Lead = lead;
             var now = Time.time;
             if (now >= entry.NextTick)
             {

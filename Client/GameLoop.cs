@@ -105,6 +105,13 @@ namespace MiyakoCarryService.Client
                     }
                 }
             }
+
+            // Fork: closes the last frame's fork-cost timing (C2Sain/ForkCost.cs), then runs the squads' guard
+            // plan jobs a few milliseconds per frame and delivers finished plans (C2Sain/TeamModes.cs,
+            // Core/PlanSlicer.cs). Last, so nothing above is skipped.
+            C2Sain.ForkCost.Tick();
+            C2Sain.TeamModes.Pump();
+            C2Sain.StrobeMarkers.Update(); // Fork v12: the carry bots' thermal beacon and IR strobe (C2Sain/StrobeMarkers.cs)
         }
 
         public void LoadAssetBundle()

@@ -11,8 +11,11 @@
 // need only a short path (IsNearPlayerOnFoot). Since fork v10 it also finds the closest spot a bot
 // can reach when it has no path to the player (TryClosestReachable, for McsBaseLayer's follow and
 // ForceTeleportCommandAction) and tests whether the player is on the navmesh (OffMeshWatch, the plan
-// log). Reads and writes no files; uses Unity's navmesh and physics queries.
+// log). Since fork v12 the three searches TryPickFollowSpot, TryPickFlankSpot and TryClosestReachable run
+// inside timing scopes (ForkCost, switched on one by one in the F12 menu), so every caller is timed alike.
+// Reads and writes no files; uses Unity's navmesh and physics queries.
 
+using MiyakoCarryService.Client.C2Sain.Core;
 using UnityEngine;
 using UnityEngine.AI;
 
@@ -88,6 +91,15 @@ namespace MiyakoCarryService.Client.C2Sain
         /// <param name="corners">The bot's path to it.</param>
         public static bool TryPickFollowSpot(Vector3 playerPos, Vector3 botPos, out Vector3 spot, out Vector3[] corners)
         {
+            using (ForkCost.Begin(CostKind.FollowSpot))
+            {
+                return PickFollowSpot(playerPos, botPos, out spot, out corners);
+            }
+        }
+
+        /// <summary>The work of <see cref="TryPickFollowSpot"/>, which only adds the fork v12 timing scope around it.</summary>
+        private static bool PickFollowSpot(Vector3 playerPos, Vector3 botPos, out Vector3 spot, out Vector3[] corners)
+        {
             var toBot = botPos - playerPos;
             toBot.y = 0f;
             var baseYaw = toBot.sqrMagnitude > 0.01f ? Mathf.Atan2(toBot.x, toBot.z) * Mathf.Rad2Deg : Random.Range(0f, 360f);
@@ -161,6 +173,15 @@ namespace MiyakoCarryService.Client.C2Sain
         /// <param name="why">When false: "no walkable ground near you", "no path from the bot" or "already as close as it can get".</param>
         public static bool TryClosestReachable(Vector3 botPos, Vector3 playerPos, out Vector3[] corners, out Vector3 end, out string why)
         {
+            using (ForkCost.Begin(CostKind.Reach))
+            {
+                return FindClosestReachable(botPos, playerPos, out corners, out end, out why);
+            }
+        }
+
+        /// <summary>The work of <see cref="TryClosestReachable"/>, which only adds the fork v12 timing scope around it.</summary>
+        private static bool FindClosestReachable(Vector3 botPos, Vector3 playerPos, out Vector3[] corners, out Vector3 end, out string why)
+        {
             corners = null;
             end = default;
             if (!TryNearestWalkable(playerPos, out var anchor))
@@ -201,6 +222,15 @@ namespace MiyakoCarryService.Client.C2Sain
         /// <param name="side">The side it lies on (+1 the bot's right as it faces the enemy, -1 its left).</param>
         /// <returns>False when the enemy is closer than 12 m or farther than 150 m, or no candidate qualifies.</returns>
         public static bool TryPickFlankSpot(Vector3 botPos, Vector3 enemyPos, int preferredSide, out Vector3 spot, out int side)
+        {
+            using (ForkCost.Begin(CostKind.Flank))
+            {
+                return PickFlankSpot(botPos, enemyPos, preferredSide, out spot, out side);
+            }
+        }
+
+        /// <summary>The work of <see cref="TryPickFlankSpot"/>, which only adds the fork v12 timing scope around it.</summary>
+        private static bool PickFlankSpot(Vector3 botPos, Vector3 enemyPos, int preferredSide, out Vector3 spot, out int side)
         {
             spot = default;
             side = 0;

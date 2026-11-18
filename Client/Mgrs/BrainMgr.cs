@@ -49,6 +49,8 @@ namespace MiyakoCarryService.Client.Mgrs
             // Fork: the v7 diagnostics' per-bot state, and the raid clock on the fork's log lines.
             MiyakoCarryService.Client.C2Sain.FrozenViewWatch.Clear();
             MiyakoCarryService.Client.C2Sain.BrainWatch.Clear();
+            MiyakoCarryService.Client.C2Sain.StrobeMarkers.Clear(); // Fork v12: destroys the carry bots' markers
+            MiyakoCarryService.Client.C2Sain.ForkCost.EndRaid(); // Fork v12: the fork-cost summary, before the raid clock stops
             MiyakoCarryService.Client.C2Sain.ForkLog.StopRaidClock();
             MiyakoCarryService.Client.C2Sain.FootstepFeed.Clear(); // Fork v8: hearing state
             MiyakoCarryService.Client.C2Sain.HeardWatch.Clear();

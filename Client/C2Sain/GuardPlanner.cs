@@ -1,9 +1,18 @@
 // GuardPlanner.cs -- where each carry bot stands while the squad guards the player.
 //
-// Called by TeamModes.GetGuardPost when a squad's guard plan is made or remade (no plan yet, the
-// player moved, a contact report arrived or expired, or a bot died), and by TeamModes.MakePlan for
-// the diagnostic log's line per post (DescribePost). Uses Unity's navmesh and
-// physics queries and MCS's cached navmesh triangulation (CommandUtils.GetNavMeshVertices). Reads
+// Since fork v12 a guard plan is made as a GuardPlanJob: the plan's work is written as a sequence of
+// small steps (PlanSteps, an iterator that yields after each batch of candidate spots, each route trace
+// and so on) and TeamModes.Pump, once a frame, runs as many of them as fit in a time budget
+// (Core/PlanSlicer.cs). Until the job is done the bots keep their current posts. Before v12 the whole
+// plan ran inside the frame that asked for it: indoors a median of 20-23 ms, max 33 (the build 11 Reserve
+// raids, evidence/2026-11-09-build-11-reserve). The decisions are fork v9-v11's, unchanged: only the
+// order of the work in time moved. A job keeps its own cover objects and route lists (GuardPlanJob), so
+// a Defend Me plan or shift made between two of its steps cannot disturb it.
+//
+// Called by TeamModes: BeginPlan when a squad's guard plan is made or remade (no plan yet, the player
+// moved, a contact report arrived or expired, or a bot died), PlanDefend and ShiftDefend (Defend Me,
+// still made in one frame) and DescribePost for the diagnostic log's line per post. Uses Unity's navmesh
+// and physics queries and MCS's cached navmesh triangulation (CommandUtils.GetNavMeshVertices). Reads
 // and writes no files.
 //
 // Plans, in order:
@@ -15,7 +24,7 @@
 //                     Falls back to the plans below when the room is open or no approach got a post;
 //   one bot        -- one post watching the player's back;
 //   otherwise      -- the detail: posts evenly spaced around the player (GuardFormation.EvenYaws).
-// The indoor plan's diagnostic line is LastIndoorReport, logged by TeamModes.LogPlan.
+// The indoor plan's diagnostic line is GuardPlanJob.IndoorReport, logged by TeamModes.LogPlan.
 // Defend Me has its own plan (PlanDefend): one spot per bot DEFEND_MIN-DEFEND_MAX m from the player,
 // each in its own sector, and a bot shifting position takes another spot in the same sector
 // (ShiftDefend). TeamModes calls both.
@@ -63,6 +72,98 @@ namespace MiyakoCarryService.Client.C2Sain
 
         /// <summary>Yaw of the sector the spot was searched in; a Defend Me shift searches the same sector again.</summary>
         public float SectorYaw;
+    }
+
+    /// <summary>
+    /// One guard plan being made a few milliseconds per frame (fork v12). Created by
+    /// <see cref="GuardPlanner.BeginPlan"/>; TeamModes.Pump calls <see cref="RunFrame"/> once a frame until
+    /// <see cref="Done"/>, then reads <see cref="Posts"/> and <see cref="IndoorReport"/>. Everything the
+    /// plan's steps share from one step to the next lives here, not in static fields, so two jobs (or a
+    /// job and a Defend Me plan) never disturb each other. Main thread only.
+    /// </summary>
+    internal sealed class GuardPlanJob
+    {
+        /// <summary>The player's position when the job began; the plan is made for it, and is the plan's anchor.</summary>
+        public readonly Vector3 Player;
+
+        /// <summary>The player's view direction when the job began.</summary>
+        public readonly Vector3 Look;
+
+        /// <summary>The contact report and bot count the plan is made for.</summary>
+        public readonly PlanKey Key;
+
+        /// <summary>The contact report to face, or null.</summary>
+        public readonly Vector3? Threat;
+
+        /// <summary>True when the plan is made for the player indoors.</summary>
+        public readonly bool Indoors;
+
+        /// <summary>Nearest a post may be to the player (m), from the settings.</summary>
+        public readonly float MinRange;
+
+        /// <summary>Farthest a post may be from the player (m), from the settings.</summary>
+        public readonly float MaxRange;
+
+        /// <summary>True when <see cref="Threat"/> is a heard sound, not a contact report (the plan's log header says so).</summary>
+        public readonly bool Heard;
+
+        /// <summary>Game time (Time.time) when the job began; TeamModes reports how long the plan took to be ready.</summary>
+        public readonly float StartedAt;
+
+        /// <summary>The posts found. Complete once the job is done.</summary>
+        public readonly List<GuardPost> Posts = new();
+
+        /// <summary>
+        /// The indoor planner's log line without its timing ("indoor approaches: 40 route(s) traced, ...
+        /// guarded"), or null when the job did not try indoor approaches. Written by the plan's steps;
+        /// TeamModes.LogPlan adds the timing.
+        /// </summary>
+        public string IndoorReport;
+
+        // Cross-step state of the plan's steps (GuardPlanner.PlanSteps and its helpers).
+        internal readonly List<Collider> Objects = new();
+        internal readonly HashSet<(int, int, int)> Cells = new();
+        internal readonly List<Vector3> Destinations = new();
+        internal readonly List<V3> Exits = new();
+        internal readonly List<Vector3> Beyond = new();
+        internal readonly List<float> ExitWidths = new();
+
+        private readonly PlanSlicer _slicer;
+
+        internal GuardPlanJob(Vector3 player, Vector3 look, PlanKey key, Vector3? threat, bool indoors, float minRange, float maxRange, bool heard, float now, System.Func<double> clockMs)
+        {
+            Player = player;
+            Look = look;
+            Key = key;
+            Threat = threat;
+            Indoors = indoors;
+            MinRange = minRange;
+            MaxRange = maxRange;
+            Heard = heard;
+            StartedAt = now;
+            _slicer = new PlanSlicer(GuardPlanner.PlanSteps(this), clockMs ?? PlanSlicer.SystemClockMs);
+        }
+
+        /// <summary>How many bots the plan posts.</summary>
+        public int BotCount => Key.BotCount;
+
+        /// <summary>True once the plan is complete (or the job was abandoned).</summary>
+        public bool Done => _slicer.Done;
+
+        /// <summary>What the job has cost so far: total work, frames, worst frame, time per phase.</summary>
+        public SliceStats Stats => _slicer.Stats;
+
+        /// <summary>Runs steps for one frame within the settings' budget (see PlanSlicer.RunFrame). Exceptions from a step propagate.</summary>
+        public double RunFrame(SliceSettings settings)
+        {
+            return _slicer.RunFrame(settings);
+        }
+
+        /// <summary>Gives the job up; its remaining steps never run.</summary>
+        public void Abandon()
+        {
+            _slicer.Abandon();
+        }
     }
 
     /// <summary>Guard plans; see the file header. Main thread only.</summary>
@@ -135,54 +236,75 @@ namespace MiyakoCarryService.Client.C2Sain
         /// </summary>
         private const float SHIFT_MAX_PATH = 6f;
 
+        /// <summary>
+        /// Fork v12: navmesh vertices looked at per step of the indoor planner's destination scan (a power
+        /// of two). Each is a few float operations, so a step of this many is a fraction of a millisecond;
+        /// a map's whole triangulation takes dozens of steps.
+        /// </summary>
+        private const int SCAN_CHUNK = 8192;
+
+        /// <summary>
+        /// Fork v12: candidate spots tried per step of a spot search. One: a candidate costs a navmesh
+        /// sample, a reach test and the cover rays (about 0.1-0.3 ms by the planner harness's cost model),
+        /// but the reach test can need a path query, which the recorder timed at up to 2 ms in the game, and
+        /// a step is the part of a frame the budget cannot split. Steps this small cost almost nothing to run.
+        /// </summary>
+        private const int SPOT_BATCH = 1;
+
         private static readonly Collider[] _colliders = new Collider[512];
-        private static readonly List<Collider> _objects = new();
-        private static readonly HashSet<(int, int, int)> _cells = new();
-        private static readonly List<Vector3> _destinations = new();
-        private static readonly List<V3> _exits = new();
-        private static readonly List<Vector3> _beyond = new();
-        private static readonly List<GuardPost> _sectorPosts = new();
-        private static readonly List<bool?> _sectorResults = new();
+        private static readonly List<Collider> _syncObjects = new();
         private static readonly GuardFormationSettings _formation = new();
         private static readonly IndoorPlanSettings _indoor = new();
         private static readonly List<Vector3> _samples = new();
         private static readonly List<bool> _inSpace = new();
         private static readonly List<float> _widths = new();
-        private static readonly List<float> _exitWidths = new();
 
         /// <summary>
-        /// One line on the last indoor approach plan (routes, approaches, which got guards and why not,
-        /// time taken), or null when the last Plan call did not try approaches. Written by Plan; read by
-        /// TeamModes.LogPlan for the diagnostic log.
-        /// </summary>
-        internal static string LastIndoorReport;
-
-        /// <summary>
-        /// Plans posts for a squad of <paramref name="botCount"/> bots. Returns up to that many posts;
-        /// fewer when the surroundings offer no usable spot for some.
+        /// Starts a guard plan for a squad of <paramref name="key"/>.BotCount bots. Nothing runs until
+        /// TeamModes.Pump gives the job a frame; the result is up to that many posts (fewer when the
+        /// surroundings offer no usable spot for some).
         /// </summary>
         /// <param name="player">The player's position.</param>
         /// <param name="look">The player's view direction.</param>
-        /// <param name="botCount">Living carry bots in the squad.</param>
+        /// <param name="key">The contact report (0 for none) and bot count the plan is for.</param>
         /// <param name="threat">A contact report to face, or null.</param>
         /// <param name="indoors">True inside the game's indoor zones (the player's AIData.EnvironmentId is not 0).</param>
         /// <param name="minRange">Nearest a post may be to the player (m), from the settings.</param>
         /// <param name="maxRange">Farthest a post may be from the player (m), from the settings.</param>
-        public static List<GuardPost> Plan(Vector3 player, Vector3 look, int botCount, Vector3? threat, bool indoors, float minRange, float maxRange)
+        /// <param name="heard">True when <paramref name="threat"/> is a heard sound, for the log header.</param>
+        /// <param name="now">Game time (Time.time).</param>
+        /// <param name="clockMs">The clock that times the job's steps; null (the plugin's choice) is the real one. The planner harness passes a scripted one.</param>
+        public static GuardPlanJob BeginPlan(Vector3 player, Vector3 look, PlanKey key, Vector3? threat, bool indoors, float minRange, float maxRange, bool heard, float now, System.Func<double> clockMs = null)
         {
-            var posts = new List<GuardPost>();
-            LastIndoorReport = null;
+            return new GuardPlanJob(player, look, key, threat, indoors, minRange, maxRange, heard, now, clockMs);
+        }
+
+        /// <summary>
+        /// The guard plan's work as steps (see <see cref="PlanSlicer"/>): each yield ends a step and names
+        /// what it spent its time on. Writes the job's posts and indoor report. The decisions are those of
+        /// fork v9-v11's Plan; only where the work pauses is new.
+        /// </summary>
+        internal static IEnumerable<PlanPhase> PlanSteps(GuardPlanJob job)
+        {
+            var player = job.Player;
+            var botCount = job.BotCount;
+            var threat = job.Threat;
+            var indoors = job.Indoors;
+            var minRange = job.MinRange;
+            var maxRange = job.MaxRange;
+            var posts = job.Posts;
             if (botCount <= 0)
             {
-                return posts;
+                yield break;
             }
-            var lookYaw = GuardFormation.YawOf(look.x, look.z);
+            var lookYaw = GuardFormation.YawOf(job.Look.x, job.Look.z);
             if (indoors)
             {
                 maxRange = Mathf.Min(maxRange, INDOOR_MAX_RANGE);
                 minRange = Mathf.Min(minRange, maxRange - 1f);
             }
-            CollectObjects(player, maxRange + 2f);
+            CollectObjects(player, maxRange + 2f, job.Objects);
+            yield return PlanPhase.Setup;
 
             if (threat.HasValue)
             {
@@ -191,35 +313,58 @@ namespace MiyakoCarryService.Client.C2Sain
                 var yaws = botCount == 1 ? new[] { threatYaw } : GuardFormation.FanYaws(botCount, threatYaw);
                 foreach (var yaw in yaws)
                 {
-                    AddIfFound(posts, SectorPost(player, yaw, _formation.FanWindows, minRange, maxRange, threat, indoors, posts, "fan", threatYaw));
+                    var fan = new SpotSearch();
+                    foreach (var step in SectorPostSteps(fan, job.Objects, player, yaw, _formation.FanWindows, minRange, maxRange, threat, indoors, posts, "fan", threatYaw))
+                    {
+                        yield return step;
+                    }
+                    AddIfFound(posts, fan.Best);
                 }
-                return posts;
+                yield break;
             }
 
-            if (indoors && TryApproachPosts(player, lookYaw, botCount, minRange, maxRange, posts))
+            if (indoors)
             {
-                return posts;
+                var approaches = new ApproachResult();
+                foreach (var step in ApproachSteps(job, approaches, player, lookYaw, botCount, minRange, maxRange))
+                {
+                    yield return step;
+                }
+                if (approaches.Succeeded)
+                {
+                    yield break;
+                }
             }
             posts.Clear();
 
             if (botCount == 1)
             {
-                AddIfFound(posts, BestSpot(player, GuardFormation.SoloYaw(lookYaw), 90f, minRange, maxRange, null, indoors, posts, "solo", lineYaw: lookYaw));
-                return posts;
+                var solo = new SpotSearch();
+                foreach (var step in BestSpotSteps(solo, job.Objects, player, GuardFormation.SoloYaw(lookYaw), 90f, minRange, maxRange, null, indoors, posts, "solo", lineYaw: lookYaw))
+                {
+                    yield return step;
+                }
+                AddIfFound(posts, solo.Best);
+                yield break;
             }
 
             foreach (var yaw in GuardFormation.EvenYaws(botCount, lookYaw))
             {
-                AddIfFound(posts, SectorPost(player, yaw, _formation.DetailWindows, minRange, maxRange, null, indoors, posts, "detail", lookYaw));
+                var detail = new SpotSearch();
+                foreach (var step in SectorPostSteps(detail, job.Objects, player, yaw, _formation.DetailWindows, minRange, maxRange, null, indoors, posts, "detail", lookYaw))
+                {
+                    yield return step;
+                }
+                AddIfFound(posts, detail.Best);
             }
-            return posts;
         }
 
         /// <summary>
         /// Defend Me: one spot per bot DEFEND_MIN-DEFEND_MAX m from the player, each bot in its own
         /// sector (GuardFormation.EvenYaws: two bots take the flanks, a lone bot the player's back),
         /// behind cover where the sector has any, and facing a contact report when there is one.
-        /// Returns up to <paramref name="botCount"/> spots; fewer when a sector offers none.
+        /// Returns up to <paramref name="botCount"/> spots; fewer when a sector offers none. Made in one
+        /// frame (not sliced as of fork v12).
         /// </summary>
         /// <param name="player">The player's position.</param>
         /// <param name="look">The player's view direction.</param>
@@ -233,12 +378,12 @@ namespace MiyakoCarryService.Client.C2Sain
             {
                 return posts;
             }
-            CollectObjects(player, DEFEND_MAX + 2f);
+            CollectObjects(player, DEFEND_MAX + 2f, _syncObjects);
             var window = DefendWindow(botCount);
             var lookYaw = GuardFormation.YawOf(look.x, look.z);
             foreach (var yaw in GuardFormation.EvenYaws(botCount, lookYaw))
             {
-                AddIfFound(posts, BestSpot(player, yaw, window, DEFEND_MIN, DEFEND_MAX, threat, indoors, posts, "defend", lineYaw: lookYaw));
+                AddIfFound(posts, BestSpot(_syncObjects, player, yaw, window, DEFEND_MIN, DEFEND_MAX, threat, indoors, posts, "defend", lineYaw: lookYaw));
             }
             return posts;
         }
@@ -247,7 +392,8 @@ namespace MiyakoCarryService.Client.C2Sain
         /// Defend Me: a new spot for a bot shifting position. It is in the same sector as the current
         /// spot, at least SHIFT_MIN_MOVE m from it, at most SHIFT_MAX_PATH m of walking from the bot,
         /// and clear of the other bots' spots. Null when the sector has no such spot; the bot then
-        /// stays where it is. Runs a navmesh path query per candidate that passes the cheaper tests.
+        /// stays where it is. Runs a navmesh path query per candidate that passes the cheaper tests,
+        /// all in one frame (not sliced as of fork v12).
         /// </summary>
         /// <param name="look">The player's view direction now, kept clear (GuardFormationSettings.LineOfFireClearance).</param>
         /// <param name="current">The bot's current Defend Me spot.</param>
@@ -255,8 +401,8 @@ namespace MiyakoCarryService.Client.C2Sain
         /// <param name="others">The other bots' spots.</param>
         public static GuardPost ShiftDefend(Vector3 player, Vector3 look, GuardPost current, Vector3 botPos, int botCount, Vector3? threat, bool indoors, List<GuardPost> others)
         {
-            CollectObjects(player, DEFEND_MAX + 2f);
-            return BestSpot(player, current.SectorYaw, DefendWindow(botCount), DEFEND_MIN, DEFEND_MAX, threat, indoors, others, "defend",
+            CollectObjects(player, DEFEND_MAX + 2f, _syncObjects);
+            return BestSpot(_syncObjects, player, current.SectorYaw, DefendWindow(botCount), DEFEND_MIN, DEFEND_MAX, threat, indoors, others, "defend",
                 p => (p - current.Spot).sqrMagnitude >= SHIFT_MIN_MOVE * SHIFT_MIN_MOVE
                     && C2Nav.TryCompletePath(botPos, p, out var corners)
                     && C2Nav.PathLength(botPos, corners) <= SHIFT_MAX_PATH,
@@ -269,55 +415,96 @@ namespace MiyakoCarryService.Client.C2Sain
             return botCount <= 1 ? 180f : 180f / botCount;
         }
 
+        /// <summary>What a spot search found: the best candidate and its score. One per search.</summary>
+        private sealed class SpotSearch
+        {
+            public GuardPost Best;
+            public float BestScore = float.MinValue;
+        }
+
+        /// <summary>What the indoor approach plan decided: true when it posted guards and the caller is done.</summary>
+        private sealed class ApproachResult
+        {
+            public bool Succeeded;
+        }
+
+        /// <summary>What a search beside one approach found: the best post, or why there is none.</summary>
+        private sealed class PostSearch
+        {
+            public GuardPost Best;
+            public string Why;
+        }
+
         /// <summary>
-        /// The post for one direction. Runs BestSpot in each sector of <paramref name="windows"/> (degrees
-        /// either side of <paramref name="yaw"/>), narrowest first, and stops at the first sector whose
-        /// best spot has cover. GuardFormation.ChooseWindow then picks that spot, or the narrowest bare
+        /// The post for one direction, as steps. Runs BestSpot in each sector of <paramref name="windows"/>
+        /// (degrees either side of <paramref name="yaw"/>), narrowest first, and stops at the first sector
+        /// whose best spot has cover. GuardFormation.ChooseWindow then picks that spot, or the narrowest bare
         /// one when no sector had cover. With GuardFormationSettings.WidenForCover off it stops at the
         /// first spot of either kind, fork v3-v4's rule for detail posts (v3-v4 searched contact-report
-        /// posts in the 50-degree sector only). Null when no sector had a spot.
+        /// posts in the 50-degree sector only). The result's Best is null when no sector had a spot.
         /// </summary>
         /// <param name="windows">Sector half-widths to try, narrowest first.</param>
         /// <param name="kind">The post kind for the overlay and the log ("detail", "fan").</param>
         /// <param name="lineYaw">The line of fire to keep clear: where the player looks, or toward the reported enemy.</param>
-        private static GuardPost SectorPost(Vector3 player, float yaw, float[] windows, float minRange, float maxRange,
-            Vector3? threat, bool indoors, List<GuardPost> taken, string kind, float lineYaw)
+        private static IEnumerable<PlanPhase> SectorPostSteps(SpotSearch result, List<Collider> objects, Vector3 player, float yaw, float[] windows,
+            float minRange, float maxRange, Vector3? threat, bool indoors, List<GuardPost> taken, string kind, float lineYaw)
         {
-            _sectorPosts.Clear();
-            _sectorResults.Clear();
+            var sectorPosts = new List<GuardPost>();
+            var sectorResults = new List<bool?>();
             foreach (var window in windows)
             {
-                var post = BestSpot(player, yaw, window, minRange, maxRange, threat, indoors, taken, kind, lineYaw: lineYaw);
-                _sectorPosts.Add(post);
-                _sectorResults.Add(post?.Covered);
+                var search = new SpotSearch();
+                foreach (var step in BestSpotSteps(search, objects, player, yaw, window, minRange, maxRange, threat, indoors, taken, kind, lineYaw: lineYaw))
+                {
+                    yield return step;
+                }
+                var post = search.Best;
+                sectorPosts.Add(post);
+                sectorResults.Add(post?.Covered);
                 if (post != null && (post.Covered || !_formation.WidenForCover))
                 {
                     break;
                 }
             }
-            var index = GuardFormation.ChooseWindow(_sectorResults, _formation);
-            return index >= 0 ? _sectorPosts[index] : null;
+            var index = GuardFormation.ChooseWindow(sectorResults, _formation);
+            result.Best = index >= 0 ? sectorPosts[index] : null;
         }
 
         /// <summary>
-        /// The best post in a sector: centred on <paramref name="yaw"/>, <paramref name="window"/> degrees
-        /// either side, between the two ranges from the player, at least MIN_POST_SPACING m from posts
-        /// already taken, and reachable from the player (indoors on a straight navmesh line, outdoors by a
-        /// short path). With <paramref name="lineYaw"/>, a spot within LineOfFireClearance degrees of that
-        /// bearing is refused. Null when no candidate qualifies.
+        /// BestSpotSteps run to the end in one go, for the Defend Me plans (made in one frame). Null when
+        /// no candidate qualifies.
         /// </summary>
+        private static GuardPost BestSpot(List<Collider> objects, Vector3 player, float yaw, float window, float minRange, float maxRange,
+            Vector3? threat, bool indoors, List<GuardPost> taken, string kind, System.Func<Vector3, bool> accept = null, float? lineYaw = null)
+        {
+            var search = new SpotSearch();
+            foreach (var _ in BestSpotSteps(search, objects, player, yaw, window, minRange, maxRange, threat, indoors, taken, kind, accept, lineYaw))
+            {
+            }
+            return search.Best;
+        }
+
+        /// <summary>
+        /// The best post in a sector, as steps (one per SPOT_BATCH candidates): centred on
+        /// <paramref name="yaw"/>, <paramref name="window"/> degrees either side, between the two ranges
+        /// from the player, at least MIN_POST_SPACING m from posts already taken, and reachable from the
+        /// player (indoors on a straight navmesh line, outdoors by a short path). With
+        /// <paramref name="lineYaw"/>, a spot within LineOfFireClearance degrees of that bearing is refused.
+        /// The result's Best is null when no candidate qualifies.
+        /// </summary>
+        /// <param name="result">Receives the best spot and its score.</param>
+        /// <param name="objects">The cover objects near the player (CollectObjects).</param>
         /// <param name="accept">An extra test a candidate must pass, run after the others; null accepts all.</param>
         /// <param name="lineYaw">The player's line of fire to keep clear, or null (indoor approach and gap posts).</param>
-        private static GuardPost BestSpot(Vector3 player, float yaw, float window, float minRange, float maxRange,
+        private static IEnumerable<PlanPhase> BestSpotSteps(SpotSearch result, List<Collider> objects, Vector3 player, float yaw, float window, float minRange, float maxRange,
             Vector3? threat, bool indoors, List<GuardPost> taken, string kind, System.Func<Vector3, bool> accept = null, float? lineYaw = null)
         {
             var sector = Quaternion.Euler(0f, yaw, 0f) * Vector3.forward;
             var guarded = threat ?? player + sector * 40f;
-            var bestScore = float.MinValue;
-            GuardPost best = null;
             var objectsTried = 0;
+            var candidates = 0;
 
-            foreach (var collider in _objects)
+            foreach (var collider in objects)
             {
                 if (collider == null || objectsTried >= MAX_OBJECTS_PER_POST)
                 {
@@ -343,14 +530,22 @@ namespace MiyakoCarryService.Client.C2Sain
                 var halfWidth = Mathf.Sqrt(bounds.size.x * bounds.size.x + bounds.size.z * bounds.size.z) * 0.5f;
                 var baseY = Mathf.Clamp(bounds.min.y, player.y - 3f, player.y + 1f);
                 Consider(new Vector3(center.x, baseY, center.z) + away.normalized * Mathf.Min(halfWidth + 0.6f, 3f));
+                if (++candidates % SPOT_BATCH == 0)
+                {
+                    yield return PlanPhase.Spots;
+                }
             }
 
             for (var i = 0; i < 16; i++)
             {
                 var direction = Quaternion.Euler(0f, yaw + Random.Range(-window, window), 0f) * Vector3.forward;
                 Consider(player + direction * Random.Range(minRange, maxRange));
+                if (++candidates % SPOT_BATCH == 0)
+                {
+                    yield return PlanPhase.Spots;
+                }
             }
-            return best;
+            yield return PlanPhase.Spots;
 
             void Consider(Vector3 raw)
             {
@@ -396,55 +591,66 @@ namespace MiyakoCarryService.Client.C2Sain
                 score -= GuardFormation.AngleBetween(GuardFormation.YawOf(fromPlayer.x, fromPlayer.z), yaw) / Mathf.Max(window, 1f) * 0.75f;
                 score -= Mathf.Abs(distance - (minRange + maxRange) * 0.5f) / Mathf.Max(maxRange, 1f) * 0.5f;
                 score -= Random.value * 0.05f;
-                if (score > bestScore)
+                if (score > result.BestScore)
                 {
-                    bestScore = score;
-                    best = new GuardPost { Spot = p, Watch = watch, Covered = covered, Kind = kind, SectorYaw = yaw };
+                    result.BestScore = score;
+                    result.Best = new GuardPost { Spot = p, Watch = watch, Covered = covered, Kind = kind, SectorYaw = yaw };
                 }
             }
         }
 
         /// <summary>
-        /// Indoors (fork v9): traces navmesh routes from the player to points 12-35 m away (other floors
-        /// included) and walks each one (WalkRoute) to where it leaves the player's space, moved back to
-        /// the narrowest point just before it (IndoorApproaches.ApproachPoint: the doorway). Those points
-        /// group into approaches (GuardFormation.ClusterExits), IndoorApproaches.GuardOrder decides which
-        /// approaches get guards (a second guard on the busiest ones before the minor ones), and
-        /// ApproachPost finds each guard a spot beside the opening with a view of it. Spare bots take the
-        /// widest gaps. Returns false (posts untouched) when there are too few routes, the room is open
-        /// (most routes stay in view), or no approach got a post; the caller then uses the even detail or
-        /// the solo post. Sets LastIndoorReport either way. Runs up to MAX_ROUTES path queries plus
-        /// navmesh and physics casts along each route; the report gives the time it took.
+        /// Indoors (fork v9), as steps: traces navmesh routes from the player to points 12-35 m away
+        /// (other floors included) and walks each one (WalkRoute) to where it leaves the player's space,
+        /// moved back to the narrowest point just before it (IndoorApproaches.ApproachPoint: the doorway).
+        /// Those points group into approaches (GuardFormation.ClusterExits), IndoorApproaches.GuardOrder
+        /// decides which approaches get guards (a second guard on the busiest ones before the minor ones),
+        /// and ApproachPostSteps finds each guard a spot beside the opening with a view of it. Spare bots
+        /// take the widest gaps. The result's Succeeded is false (posts untouched) when there are too few
+        /// routes, the room is open (most routes stay in view), or no approach got a post; the caller then
+        /// uses the even detail or the solo post. Sets the job's IndoorReport either way. Runs up to
+        /// MAX_ROUTES path queries plus navmesh and physics casts along each route, a few per step.
         /// </summary>
-        private static bool TryApproachPosts(Vector3 player, float lookYaw, int botCount, float minRange, float maxRange, List<GuardPost> posts)
+        private static IEnumerable<PlanPhase> ApproachSteps(GuardPlanJob job, ApproachResult result, Vector3 player, float lookYaw, int botCount, float minRange, float maxRange)
         {
-            var clock = System.Diagnostics.Stopwatch.StartNew();
             var report = new StringBuilder("indoor approaches: ");
-            var result = TraceApproaches(player, lookYaw, botCount, minRange, maxRange, posts, report);
-            report.Append($"; {clock.Elapsed.TotalMilliseconds:0} ms");
-            LastIndoorReport = report.ToString();
-            return result;
+            foreach (var step in TraceApproachSteps(job, result, player, lookYaw, botCount, minRange, maxRange, report))
+            {
+                yield return step;
+            }
+            job.IndoorReport = report.ToString();
         }
 
-        /// <summary>TryApproachPosts' work; writes what it found and decided to <paramref name="report"/>.</summary>
-        private static bool TraceApproaches(Vector3 player, float lookYaw, int botCount, float minRange, float maxRange, List<GuardPost> posts, StringBuilder report)
+        /// <summary>ApproachSteps' work; writes what it found and decided to <paramref name="report"/>.</summary>
+        private static IEnumerable<PlanPhase> TraceApproachSteps(GuardPlanJob job, ApproachResult result, Vector3 player, float lookYaw, int botCount, float minRange, float maxRange, StringBuilder report)
         {
+            var posts = job.Posts;
             if (!NavMesh.SamplePosition(player, out var start, 1.5f, NavMesh.AllAreas))
             {
                 report.Append("you are off the navmesh, using the even detail");
-                return false;
+                yield break;
             }
             var vertices = CommandUtils.GetNavMeshVertices();
             if (vertices == null || vertices.Length == 0)
             {
                 report.Append("no navmesh triangulation, using the even detail");
-                return false;
+                yield break;
             }
 
-            _cells.Clear();
-            _destinations.Clear();
-            foreach (var v in vertices)
+            var cells = job.Cells;
+            var destinations = job.Destinations;
+            var exits = job.Exits;
+            var beyond = job.Beyond;
+            var exitWidths = job.ExitWidths;
+            cells.Clear();
+            destinations.Clear();
+            for (var vi = 0; vi < vertices.Length; vi++)
             {
+                if (vi > 0 && (vi & (SCAN_CHUNK - 1)) == 0)
+                {
+                    yield return PlanPhase.Scan;
+                }
+                var v = vertices[vi];
                 var dx = v.x - player.x;
                 var dz = v.z - player.z;
                 var flatSq = dx * dx + dz * dz;
@@ -453,65 +659,68 @@ namespace MiyakoCarryService.Client.C2Sain
                 {
                     continue;
                 }
-                if (_cells.Add((Mathf.FloorToInt(v.x / 5f), Mathf.FloorToInt(v.y / 3f), Mathf.FloorToInt(v.z / 5f))))
+                if (cells.Add((Mathf.FloorToInt(v.x / 5f), Mathf.FloorToInt(v.y / 3f), Mathf.FloorToInt(v.z / 5f))))
                 {
-                    _destinations.Add(v);
+                    destinations.Add(v);
                 }
             }
+            yield return PlanPhase.Scan;
 
-            _exits.Clear();
-            _beyond.Clear();
-            _exitWidths.Clear();
+            exits.Clear();
+            beyond.Clear();
+            exitWidths.Clear();
             var path = new NavMeshPath();
             var eye = player + Vector3.up * EYE_HEIGHT;
-            var stride = Mathf.Max(1, _destinations.Count / MAX_ROUTES);
+            var stride = Mathf.Max(1, destinations.Count / MAX_ROUTES);
             int traced = 0, stayed = 0;
-            for (var i = 0; i < _destinations.Count && traced < MAX_ROUTES; i += stride)
+            for (var i = 0; i < destinations.Count && traced < MAX_ROUTES; i += stride)
             {
-                if (!NavMesh.CalculatePath(start.position, _destinations[i], NavMesh.AllAreas, path) || path.status != NavMeshPathStatus.PathComplete)
+                if (NavMesh.CalculatePath(start.position, destinations[i], NavMesh.AllAreas, path) && path.status == NavMeshPathStatus.PathComplete)
                 {
-                    continue;
+                    traced++;
+                    var corners = path.corners;
+                    WalkRoute(start.position, eye, player.y, corners);
+                    var exit = IndoorApproaches.FindExit(_inSpace, _indoor);
+                    if (exit < 0)
+                    {
+                        stayed++;
+                    }
+                    else
+                    {
+                        _widths.Clear();
+                        var lookBack = Mathf.FloorToInt(_indoor.DoorLookBack / _indoor.SampleStep + 1e-4f);
+                        for (var s = 0; s < _samples.Count; s++)
+                        {
+                            _widths.Add(s >= 1 && s <= exit && s >= exit - lookBack ? WidthAt(s) : float.NaN);
+                        }
+                        var point = IndoorApproaches.ApproachPoint(_widths, exit, _indoor);
+                        var at = _samples[point];
+                        if (!PointAlong(start.position, corners, point * _indoor.SampleStep + BEYOND_PAST_APPROACH, out var beyondPoint))
+                        {
+                            beyondPoint = corners[corners.Length - 1];
+                        }
+                        exits.Add(new V3(at.x, at.y, at.z));
+                        beyond.Add(beyondPoint);
+                        exitWidths.Add(float.IsNaN(_widths[point]) ? WidthAt(point) : _widths[point]);
+                    }
                 }
-                traced++;
-                var corners = path.corners;
-                WalkRoute(start.position, eye, player.y, corners);
-                var exit = IndoorApproaches.FindExit(_inSpace, _indoor);
-                if (exit < 0)
-                {
-                    stayed++;
-                    continue;
-                }
-                _widths.Clear();
-                var lookBack = Mathf.FloorToInt(_indoor.DoorLookBack / _indoor.SampleStep + 1e-4f);
-                for (var s = 0; s < _samples.Count; s++)
-                {
-                    _widths.Add(s >= 1 && s <= exit && s >= exit - lookBack ? WidthAt(s) : float.NaN);
-                }
-                var point = IndoorApproaches.ApproachPoint(_widths, exit, _indoor);
-                var at = _samples[point];
-                if (!PointAlong(start.position, corners, point * _indoor.SampleStep + BEYOND_PAST_APPROACH, out var beyond))
-                {
-                    beyond = corners[corners.Length - 1];
-                }
-                _exits.Add(new V3(at.x, at.y, at.z));
-                _beyond.Add(beyond);
-                _exitWidths.Add(float.IsNaN(_widths[point]) ? WidthAt(point) : _widths[point]);
+                yield return PlanPhase.Routes;
             }
-            var left = _exits.Count;
+            var left = exits.Count;
             report.Append($"{traced} route(s) traced, {left} left your space, {stayed} stayed in view");
             if (traced < MIN_ROUTES || left == 0)
             {
                 report.Append(left == 0 && traced >= MIN_ROUTES ? "; no way out found" : "; too few routes").Append(", using the even detail");
-                return false;
+                yield break;
             }
             if (IndoorApproaches.IsOpenRoom(traced, stayed, _indoor))
             {
                 report.Append("; an open room, using the even detail");
-                return false;
+                yield break;
             }
 
             var playerV3 = new V3(player.x, player.y, player.z);
-            var approaches = GuardFormation.ClusterExits(_exits, playerV3, _formation);
+            var approaches = GuardFormation.ClusterExits(exits, playerV3, _formation);
             // The whole ranked list, not just botCount entries, so a bot whose approach offers no spot
             // tries the next one in rank instead of going straight to a gap.
             var order = IndoorApproaches.GuardOrder(approaches, lookYaw, approaches.Count * 2, _indoor);
@@ -527,10 +736,15 @@ namespace MiyakoCarryService.Client.C2Sain
                 }
                 var approach = approaches[index];
                 Describe(approach, out var point, out var inward, out _);
-                var post = ApproachPost(player, point, inward, maxRange, posts, partnerSides[index], out var why);
+                var search = new PostSearch();
+                foreach (var step in ApproachPostSteps(search, player, point, inward, maxRange, posts, partnerSides[index]))
+                {
+                    yield return step;
+                }
+                var post = search.Best;
                 if (post == null)
                 {
-                    outcome[index] ??= why;
+                    outcome[index] ??= search.Why;
                     continue;
                 }
                 posts.Add(post);
@@ -562,15 +776,20 @@ namespace MiyakoCarryService.Client.C2Sain
             if (posts.Count == 0)
             {
                 report.Append("; no post found, using the even detail");
-                return false;
+                yield break;
             }
 
             var yaws = GuardFormation.FillGaps(coveredYaws, botCount, lookYaw);
             for (var i = coveredYaws.Count; i < yaws.Count && posts.Count < botCount; i++)
             {
-                AddIfFound(posts, BestSpot(player, yaws[i], 45f, Mathf.Min(minRange, 2f), maxRange, null, true, posts, "gap"));
+                var gap = new SpotSearch();
+                foreach (var step in BestSpotSteps(gap, job.Objects, player, yaws[i], 45f, Mathf.Min(minRange, 2f), maxRange, null, true, posts, "gap"))
+                {
+                    yield return step;
+                }
+                AddIfFound(posts, gap.Best);
             }
-            return true;
+            result.Succeeded = true;
 
             // An approach's averaged point, the direction from it into the player's room (against the way
             // its routes leave), and what it looks like (IndoorApproaches.Classify).
@@ -581,8 +800,8 @@ namespace MiyakoCarryService.Client.C2Sain
                 var widthSum = 0f;
                 foreach (var member in approach.Members)
                 {
-                    beyondSum += _beyond[member];
-                    widthSum += _exitWidths[member];
+                    beyondSum += beyond[member];
+                    widthSum += exitWidths[member];
                 }
                 var beyondAvg = beyondSum / approach.Members.Count;
                 inward = point - beyondAvg;
@@ -603,7 +822,8 @@ namespace MiyakoCarryService.Client.C2Sain
         /// MAX_HEIGHT_FOR_SPACE m of the player's height, and either a straight navmesh line from the
         /// player or an unobstructed line of sight from the player's eyes at chest height (so a table or
         /// a pillar does not end the room). Stops once the route has stayed out for OutRun m, or after
-        /// EXIT_SCAN_MAX m plus OutRun.
+        /// EXIT_SCAN_MAX m plus OutRun. Runs inside one step, so _samples, _inSpace and _widths are free
+        /// for the next route.
         /// </summary>
         private static void WalkRoute(Vector3 start, Vector3 eye, float playerY, Vector3[] corners)
         {
@@ -670,18 +890,18 @@ namespace MiyakoCarryService.Client.C2Sain
         }
 
         /// <summary>
-        /// A post watching one approach (fork v9): candidates on rings 2-5 m from the approach point, up
-        /// to 75 degrees either side of the way into the player's room, each needing to be on the
-        /// navmesh on the player's floor, within <paramref name="maxRange"/> m of the player, clear of
-        /// the other posts, in the player's space and with a view of the approach at crouched eye
+        /// A post watching one approach (fork v9), as steps (one per candidate): candidates on rings 2-5 m from
+        /// the approach point, up to 75 degrees either side of the way into the player's room, each needing
+        /// to be on the navmesh on the player's floor, within <paramref name="maxRange"/> m of the player,
+        /// clear of the other posts, in the player's space and with a view of the approach at crouched eye
         /// height. IndoorApproaches.ScorePost ranks the survivors (cover, a wall beside, an angle off
-        /// the axis, the other side from a first guard). The post watches the approach point. Null when
-        /// nothing qualifies; <paramref name="why"/> then says where the candidates fell out.
+        /// the axis, the other side from a first guard). The post watches the approach point. The result's
+        /// Best is null when nothing qualifies; its Why then says where the candidates fell out.
         /// </summary>
         /// <param name="point">The approach point (the doorway, or where the routes leave).</param>
         /// <param name="inward">Horizontal unit direction from the approach into the player's room.</param>
         /// <param name="partnerSide">IndoorApproaches.SideOf the first guard's post on this approach, or 0.</param>
-        private static GuardPost ApproachPost(Vector3 player, Vector3 point, Vector3 inward, float maxRange, List<GuardPost> taken, int partnerSide, out string why)
+        private static IEnumerable<PlanPhase> ApproachPostSteps(PostSearch search, Vector3 player, Vector3 point, Vector3 inward, float maxRange, List<GuardPost> taken, int partnerSide)
         {
             var hard = LayersMaskController.HighPolyWithTerrainMask;
             var pointV3 = new V3(point.x, point.y, point.z);
@@ -695,6 +915,11 @@ namespace MiyakoCarryService.Client.C2Sain
             {
                 foreach (var angle in PostAngles)
                 {
+                    // One step per candidate (the previous candidate's work ends here); see SPOT_BATCH.
+                    if (tries > 0)
+                    {
+                        yield return PlanPhase.Posts;
+                    }
                     tries++;
                     var raw = point + Quaternion.Euler(0f, angle, 0f) * inward * distance;
                     if (!NavMesh.SamplePosition(raw, out var hit, 0.6f, NavMesh.AllAreas) || Mathf.Abs(hit.position.y - player.y) > MAX_HEIGHT_FOR_SPACE)
@@ -750,27 +975,30 @@ namespace MiyakoCarryService.Client.C2Sain
                     }
                 }
             }
-            why = best != null ? null
+            yield return PlanPhase.Posts;
+            search.Best = best;
+            search.Why = best != null ? null
                 : $"no spot: {tries} tries, {offMesh} off the navmesh or on another floor, {tooFar} too far from you, {crowded} beside another post, "
                     + $"{outside} outside your space, {noView} with no view of it, {badAngle} too close, too far or in your way";
-            return best;
         }
 
-        /// <summary>Distances (m) from an approach point at which ApproachPost tries spots.</summary>
+        /// <summary>Distances (m) from an approach point at which ApproachPostSteps tries spots.</summary>
         private static readonly float[] PostRings = { 2f, 3f, 4f, 5f };
 
-        /// <summary>Degrees either side of the way into the player's room at which ApproachPost tries spots.</summary>
+        /// <summary>Degrees either side of the way into the player's room at which ApproachPostSteps tries spots.</summary>
         private static readonly float[] PostAngles = { 0f, 20f, -20f, 40f, -40f, 60f, -60f, 75f, -75f };
 
         /// <summary>
-        /// Collects colliders near the player that can serve as cover, using SAIN's cover-finder rules
-        /// (layers Terrain, HighPolyCollider and Foliage; at least 0.75 m tall and 0.25 m wide), minus
-        /// anything wider than OBJECT_MAX_WIDTH and anything floating above the player's head (tree
-        /// canopies) or well below their feet.
+        /// Collects colliders near the player that can serve as cover into <paramref name="into"/>, using
+        /// SAIN's cover-finder rules (layers Terrain, HighPolyCollider and Foliage; at least 0.75 m tall and
+        /// 0.25 m wide), minus anything wider than OBJECT_MAX_WIDTH and anything floating above the player's
+        /// head (tree canopies) or well below their feet. Runs in one go, so the shared collider buffer is
+        /// free again when it returns.
         /// </summary>
-        private static void CollectObjects(Vector3 player, float radius)
+        /// <param name="into">Cleared, then filled; each plan job and the Defend Me plans keep their own list.</param>
+        private static void CollectObjects(Vector3 player, float radius, List<Collider> into)
         {
-            _objects.Clear();
+            into.Clear();
             var count = Physics.OverlapSphereNonAlloc(player + Vector3.up, radius, _colliders,
                 LayersMaskController.HighPolyWithTerrainNoGrassMask, QueryTriggerInteraction.Collide);
             for (var i = 0; i < count; i++)
@@ -792,7 +1020,7 @@ namespace MiyakoCarryService.Client.C2Sain
                 {
                     continue;
                 }
-                _objects.Add(collider);
+                into.Add(collider);
             }
         }
 

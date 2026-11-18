@@ -31,6 +31,7 @@ namespace MiyakoCarryService.Client.C2Sain.Patches
         [PatchPrefix]
         public static void Prefix(BotDecisionManager __instance, ref ECombatDecision solo, ref ESquadDecision squad, ref ESelfActionType self, Enemy enemy)
         {
+            using var timing = ForkCost.Begin(Core.CostKind.Decisions); // fork v12: timed when its "Timing:" switch is on
             try
             {
                 DecisionPolicy.Apply(__instance.Bot, ref solo, ref squad, ref self, enemy);

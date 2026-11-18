@@ -62,6 +62,7 @@ namespace MiyakoCarryService.Client.C2Sain.Patches
         [PatchPrefix]
         public static void Prefix(Vector3 castPoint, ref RaycastHit raycastHit, ERaycastCheck type)
         {
+            using var timing = ForkCost.Begin(Core.CostKind.FoliageSight); // fork v12: timed when its "Timing:" switch is on
             try
             {
                 var radius = ForkConfig.FoliageSightRadius?.Value ?? 0f;

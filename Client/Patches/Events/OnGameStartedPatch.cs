@@ -32,6 +32,7 @@ namespace MiyakoCarryService.Client.Patches.Events
         {
             // Fork: the raid clock on the fork's log lines, started where Raid Review starts its own (C2Sain/ForkLog.cs).
             C2Sain.ForkLog.StartRaidClock();
+            C2Sain.ForkCost.StartRaid(); // Fork v12: per-raid fork-cost counts start from zero
             GameLoop.Instance.IsGameStarted = true;
             GameLoop.Instance.CheckVaildGameWorld();
 

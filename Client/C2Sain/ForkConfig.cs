@@ -55,7 +55,42 @@ namespace MiyakoCarryService.Client.C2Sain
         public static ConfigEntry<float> GunshotHearingRange;
         public static ConfigEntry<float> FollowFootstepRange;
         public static ConfigEntry<bool> SayIHearSomething;
+        public static ConfigEntry<float> PlannerBudgetMs;
+        public static ConfigEntry<bool> StrobeThermal;
+        public static ConfigEntry<bool> StrobeIr;
+        public static ConfigEntry<Core.IrPattern> StrobeIrPattern;
+        public static ConfigEntry<float> StrobeThermalPeriod;
+        public static ConfigEntry<float> StrobeThermalHeat;
+        public static ConfigEntry<float> StrobeHeight;
+        public static ConfigEntry<float> StrobeSize;
+        public static ConfigEntry<float> StrobeIrIntensity;
+        public static ConfigEntry<float> StrobeIrRange;
+        public static ConfigEntry<bool> CostPlanner;
+        public static ConfigEntry<bool> CostDefend;
+        public static ConfigEntry<bool> CostFlank;
+        public static ConfigEntry<bool> CostReach;
+        public static ConfigEntry<bool> CostFollowSpot;
+        public static ConfigEntry<bool> CostFoliageSight;
+        public static ConfigEntry<bool> CostDecisions;
+        public static ConfigEntry<bool> CostStrobe;
+        public static ConfigEntry<float> CostThresholdMs;
         public static ConfigEntry<bool> DebugLog;
+
+        /// <summary>The switch that turns timing of a kind of work on (fork v12; each needs "Debug: diagnostic log" on too).</summary>
+        internal static ConfigEntry<bool> CostSwitch(Core.CostKind kind)
+        {
+            return kind switch
+            {
+                Core.CostKind.Planner => CostPlanner,
+                Core.CostKind.Defend => CostDefend,
+                Core.CostKind.Flank => CostFlank,
+                Core.CostKind.Reach => CostReach,
+                Core.CostKind.FollowSpot => CostFollowSpot,
+                Core.CostKind.FoliageSight => CostFoliageSight,
+                Core.CostKind.Strobe => CostStrobe,
+                _ => CostDecisions,
+            };
+        }
 
         /// <summary>
         /// Registers every fork setting with MCS's config helper.
@@ -96,6 +131,25 @@ namespace MiyakoCarryService.Client.C2Sain
             GunshotHearingRange = Float(plugin, "GunshotRange", 25f, 0f, 300f);
             FollowFootstepRange = Float(plugin, "FollowFootstepRange", 30f, 0f, 70f);
             SayIHearSomething = Bool(plugin, "SayIHearSomething", true);
+            PlannerBudgetMs = Float(plugin, "PlannerBudget", 3f, 0.5f, 30f);
+            StrobeThermal = Bool(plugin, "StrobeThermal", true);
+            StrobeIr = Bool(plugin, "StrobeIr", true);
+            StrobeIrPattern = Enum(plugin, "StrobeIrPattern", Core.IrPattern.DoubleFlash);
+            StrobeThermalPeriod = Float(plugin, "StrobeThermalPeriod", 2f, 0.5f, 10f);
+            StrobeThermalHeat = Float(plugin, "StrobeThermalHeat", 65f, 30f, 120f);
+            StrobeHeight = Float(plugin, "StrobeHeight", 0.4f, 0.1f, 1.5f);
+            StrobeSize = Float(plugin, "StrobeSize", 0.22f, 0.05f, 0.8f);
+            StrobeIrIntensity = Float(plugin, "StrobeIrIntensity", 1.5f, 0.1f, 10f);
+            StrobeIrRange = Float(plugin, "StrobeIrRange", 6f, 1f, 20f);
+            CostPlanner = Bool(plugin, "CostPlanner", false);
+            CostDefend = Bool(plugin, "CostDefend", false);
+            CostFlank = Bool(plugin, "CostFlank", false);
+            CostReach = Bool(plugin, "CostReach", false);
+            CostFollowSpot = Bool(plugin, "CostFollowSpot", false);
+            CostFoliageSight = Bool(plugin, "CostFoliageSight", false);
+            CostDecisions = Bool(plugin, "CostDecisions", false);
+            CostStrobe = Bool(plugin, "CostStrobe", false);
+            CostThresholdMs = Float(plugin, "CostThreshold", 2f, 0.5f, 50f);
             DebugLog = Bool(plugin, "DebugLog", false);
         }
 

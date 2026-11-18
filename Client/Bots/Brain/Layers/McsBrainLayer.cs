@@ -21,6 +21,7 @@ namespace MiyakoCarryService.Client.Bots.Brain.Layers
             try
             {
                 var time = Time.time;
+                McsBotPlayerData?.Fork.Follow.OnDecision(); // Fork v15: no follow walk runs until the follow branch below starts one
                 if (McsBotPlayerData != null && (McsBotPlayerData.MoveResetRequested || McsBotPlayerData.HasIntent(Intents.ShouldTeleport)))
                 {
                     McsBotPlayerData.MoveResetRequested = false;
@@ -879,11 +880,37 @@ namespace MiyakoCarryService.Client.Bots.Brain.Layers
 
                 TryRefreshLeadTarget(mcsLeadPlayerPos, time);
 
-                if (IsBeyondFollowDistance(sqrDistance) || tooClose)
+                // Fork v15: the bot keeps trailing a moving player (Core/FollowTrail.cs), starting at the follow distance
+                // and stopping only when close with the player slowed, instead of walking to one spot and standing until
+                // the gap is the follow distance again. Not in formation (its slots have their own rule) and not with
+                // the setting "Follow: trail while you move" off, which keeps v14's rule exactly.
+                var follow = McsBotPlayerData.Fork.Follow;
+                var trail = C2Sain.FollowWatch.TrailOn && !McsBotPlayerData.HasIntent(Intents.ShouldKeepFormation);
+                var wantsWalk = IsBeyondFollowDistance(sqrDistance) || tooClose;
+                if (trail)
+                {
+                    var wasTrailing = follow.Trailing;
+                    wantsWalk = follow.WantsWalk(time, Mathf.Sqrt(sqrDistance), IsBeyondFollowDistance(sqrDistance), tooClose,
+                        C2Sain.FollowWatch.LeadSpeed(McsBotPlayerData.LeadPlayer), C2Sain.FollowWatch.FollowDistance, C2Sain.FollowWatch.Settings);
+                    if (wantsWalk && follow.Trailing && !wasTrailing)
+                    {
+                        RetargetFollow(mcsLeadPlayerPos); // a spot where the player is now, not where they were when the last spot was picked
+                    }
+                }
+
+                if (wantsWalk)
                 {
                     if (_currentMoveTarget.HasValue)
                     {
                         ApplyMovePoint();
+                        if (trail)
+                        {
+                            follow.BeginWalk(time, C2Sain.FollowWatch.ToV3(BotOwner.Position), C2Sain.FollowWatch.Settings);
+                            if (follow.InTeleportGrace(time, C2Sain.FollowWatch.Settings))
+                            {
+                                RepathFollow(); // just teleported: start walking at once, on the navmesh route
+                            }
+                        }
                         return new Action(typeof(GoToPointLogic), tooClose ? "Mcs:TooClose" : "Mcs:TooFar");
                     }
                 }
@@ -937,6 +964,12 @@ namespace MiyakoCarryService.Client.Bots.Brain.Layers
             if (wantsC2)
             {
                 C2Sain.SainBridge.ReleaseSain(BotOwner);
+            }
+            else if (mcsBotPlayerData != null)
+            {
+                // Fork v15: another layer has the bot; the follow starts afresh when C2 is back (ends a reported stall).
+                mcsBotPlayerData.Fork.Follow.Reset();
+                C2Sain.FollowWatch.Poll(mcsBotPlayerData, BotOwner, null, null, false);
             }
 
             if (BotOwner.Memory.HaveEnemy)

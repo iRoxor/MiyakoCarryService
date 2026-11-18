@@ -4,7 +4,8 @@
 // Fork property). Written by C2Gate (C2 layer gate), DecisionPolicy and
 // EngageTactics (SAIN decision prefix), McsGuardLayer, TeamModes (the Defend Me
 // shift timer), the guard logics (walk progress, look scan), the fork's commands
-// (ForkCommands, Break off) and EscortToPointByWayLogic; read by ForkDebug for the
+// (ForkCommands, Break off), EscortToPointByWayLogic and, since v15, the follow code
+// (McsBrainLayer, McsBaseLayer.EndFollowWalk, GoToPointLogic, the teleports); read by ForkDebug for the
 // overlay, by the diagnostics (OpenGroundWatch, BrainWatch, FrozenViewWatch), by
 // GuardMoveLogic and by BotWeaponSelectorPatch. Holds no Unity objects that outlive a raid. Reads and
 // writes no files.
@@ -29,6 +30,13 @@ namespace MiyakoCarryService.Client.C2Sain
 
         /// <summary>Escort sprint/walk/wait cycle (EscortToPointByWayLogic).</summary>
         public readonly EscortPacer EscortPace = new(() => Random.value);
+
+        /// <summary>
+        /// Fork v15: how the bot keeps up with a moving player (trailing, catch-up pace, stall re-paths, teleport
+        /// grace). Written by McsBrainLayer (GetNextAction, IsActive), McsBaseLayer.EndFollowWalk, GoToPointLogic
+        /// (the speed rule), the teleports (McsBaseLayer, CommandMgr) and read by FollowWatch for the stall log.
+        /// </summary>
+        public readonly FollowTrail Follow = new();
 
         /// <summary>When the bot shifts to a new Defend Me spot (TeamModes.GetDefendPost).</summary>
         public readonly DefendShuffle DefendShift = new(() => Random.value);

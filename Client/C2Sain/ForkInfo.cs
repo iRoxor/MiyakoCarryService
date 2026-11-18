@@ -587,10 +587,91 @@ namespace MiyakoCarryService.Client.C2Sain
         ///    - "Timing: carry bot markers" showing 1 ms or more a frame sends the per-camera step back (v13: 0.4 ms
         ///      worst); a "markers: switched off ... after an error" line is a bug to fix before anything else.
         ///    Measured: nothing yet (no raid has run v14).
+        /// 15 (2026-11-18) Test build 15: a carry bot keeps up with a player who is moving. Built on build 14 (the markers
+        ///    are build 14's and untouched), so one install tests both.
+        ///    Measured before it (evidence/2026-11-18-build-13-first-raid/keep-up-analysis.txt: the user's raid with v13,
+        ///    35.5 minutes of raid clock with the 25.9-minute pause left out, 9.8 minutes of following, one carry bot):
+        ///    - 33 entries from Mcs:Default into Mcs:TooFar at 8-9 m (33.6 per 10 minutes of following; builds 7-11:
+        ///      7.5-81), 28 exits back at 3-8 m, TooFar 71% of the following time, 10 TooClose and 31 Partoling entries
+        ///      (10 and 32 per 10 minutes). The cause, from the code and not seen in the game: the walk's spot is picked
+        ///      once, 1.5-4 m from where the player stood, and never refreshed, because BigBrain asks the layer for a new
+        ///      action only when EndGoToPoint ends the walk (arrival, 6 s without a 2 m move, a threat); the bot arrives
+        ///      3-8 m behind a player who has walked on and holds until the gap is 8 m again.
+        ///    - A crouching or slow-walking player (the user plays both ways) was followed at their own pace within 50 m
+        ///      with no sprint (GoToPointLogic's speed copy), and a prone player gave the bot target speed 0, so it
+        ///      could not close any gap.
+        ///    - 12 stands of 5-28 s in Mcs:TooFar 30-146 m from the player, in the open, with no mover state in the log;
+        ///      most began just after a hand-over from the Guard layer or SAIN's Combat layer. Three real jumps (the
+        ///      user's Force Teleport at 43:15.0 and probably 59:20.0, MCS's own 30 s teleport at 60:55.3) and, after two
+        ///      of them, a 7 s stand in Mcs:TooClose at 0 m (1 s before CheckStuck runs again plus the 6 s exit).
+        ///    The user's answers (2026-11-18): the jumps at 43:15 and probably 59:20 were their Force Teleport; they move
+        ///    both crouched and with the walk speed turned down; sprinting to catch up is fine ("the enemy AI can't hear
+        ///    the sound of other bots, only the players'").
+        ///    Changed, all behind the setting "Follow: trail while you move" (McsFork/FollowTrail, default on; off keeps v14's
+        ///    rules exactly), logic in Core/FollowTrail.cs:
+        ///    - Trail while the player moves. A bot beyond the follow distance (8 m) starts walking and keeps trailing.
+        ///      While it walks (McsBaseLayer.EndFollowWalk, once a frame) its spot is replaced, at most once a second, when
+        ///      it has gone stale (more than 4.5 m from the player), and at once when the bot has reached a stale spot, by
+        ///      a new C2Nav.TryPickFollowSpot pick where the player is now (the "in the player's space" rule is unchanged).
+        ///      The walk ends, and the bot holds, only when the bot is within the stop distance (0.55 x the follow distance,
+        ///      2.2-4.5 m: 4.4 m by default) and the player has been slower than 0.25 m/s (their velocity) for 1 s, or when
+        ///      the bot has reached a good spot with the player slow. Within 2 m of the player the bot first steps back to
+        ///      its spot (v14's Mcs:TooClose), so a walk is not ended and begun again every frame.
+        ///    - Catch up at full speed (GoToPointLogic). Beyond the follow distance the bot sprints, the game's own rule
+        ///      for a walk with no pose copy (it sprints while 5 m or more from its spot), whatever the player's pose or
+        ///      speed setting, from 8 m until it is within the release distance (0.7 x the follow distance, 2.5-6.5 m:
+        ///      5.6 m); only then does it copy a crouching or slow-walking player's pose and speed, or a prone player's
+        ///      stillness. v14 copied them within 50 m. A prone player can no longer freeze a bot that is behind.
+        ///    - Re-path after a stall. A bot walking to a spot it has not reached that has not moved 0.3 m in 2 s gets a
+        ///      new spot, a lying bot is told to get up, and the mover is handed the navmesh path MCS computes itself
+        ///      (BotOwner.GoToByWay, as MCS's melee logic does), which does not depend on the mover's own core-point path
+        ///      finder or its start core point; with no complete navmesh path the mover's own path is forced. Again after 4 s;
+        ///      after 6 s the walk ends and starts again (v14 waited 6 s and then restarted the same way). A bot copying a
+        ///      prone player stands on purpose and is never re-pathed. MCS's own 30 s teleport (20 m or more away) is kept.
+        ///    - After a teleport (MCS's own, or the Force Teleport command) the next walk starts on the navmesh route at
+        ///      once, and the stall wait is 1 s instead of 2 for 4 s, so the bot does not stand 7 s as in the v13 raid.
+        ///    Unchanged: the brain reasons Mcs:Default, Mcs:TooFar, Mcs:TooClose, Mcs:Partoling (the stats tool reads them),
+        ///    the follow-distance setting's meaning as the start distance, Partoling, formation following, escorts and
+        ///    every other walk (they keep EndGoToPoint's rules), and the markers.
+        ///    Diagnostics, with "Debug: diagnostic log" on, in the style of the other watches (C2Sain/FollowWatch.cs):
+        ///    - "follow stall:" once when a bot has stood still 3 s on its walk to you (not arrived, or at a stale spot):
+        ///      its distance from you, from its spot, the spot's distance from you, whether it counts as arrived, the
+        ///      navmesh path status to the spot, the mover's state (path, moving, paused, sprinting, lying, blocked, the
+        ///      mover's state name, target speed, path age), the speed rule in force and your pose and speed; and once more
+        ///      when it ends (moved again, teleported, stopped, interrupted) with its re-paths and give-ups.
+        ///    - "teleport: MCS moved X to you after it stood still N s, M m from you" for each MCS auto-teleport, and
+        ///      "teleport: Force Teleport command: X was M m from you; mover: ..." for each Force Teleport command, so a
+        ///      later analysis can tell them apart. tools/mcs_follow_stats.py counts both and the stalls.
+        ///    Pooling: follow-state counts from v15 do not pool with v14 and earlier. Entries from Default into TooFar,
+        ///    TooFar's share of the following time, the length of TooFar stretches and the "standing in TooFar" reports mean
+        ///    something else now (a trailing bot stays in TooFar while the player moves; it is not stop-and-go). Compare v15's
+        ///    "follow stall:" and "teleport:" lines, which v14 and earlier do not have, only with other v15 raids. Everything
+        ///    else (guard plans, hearing, the markers, the planner's timing) pools UNRESTRICTED with v12-v14: no decision
+        ///    outside the follow walks changed, and no record field was repurposed or removed.
+        ///    Falsifiers (written before any v15 raid):
+        ///    - in a raid with 5 minutes or more of following where the player walks a lot, Default->TooFar entries above
+        ///      10 per 10 minutes of following (v13: 33.6) mean trailing does not hold: check "follow stall:" lines and
+        ///      whether the bot's walk keeps ending (the stats tool's TooFar -> Default exits);
+        ///    - a stand of 5 s or more in Mcs:TooFar (an "open ground:" or "frozen view:" line) with no "follow stall:" line
+        ///      for the same bot within 3 s of its start means the stall report misses a cause: the bot is standing in
+        ///      something other than a mover stall, and the lines around it say what;
+        ///    - more than a third of the "follow stall:" lines ending as "the follow ended" or with 2 or more give-ups, or
+        ///      any stall over 15 s that was not a teleport, mean the re-path does not free the mover; the mover state in
+        ///      the line names what it does instead;
+        ///    - a "follow stall:" line within 5 s after a "teleport:" line means the bot did not start walking at once,
+        ///      and the navmesh route after a teleport is not enough;
+        ///    - TooClose entries above 20 per 10 minutes of following (v13: 10) or Partoling above 60 (v13: 32) mean the
+        ///      trailing bot crowds the player or jitters at its stop distance: stop and release distances go up;
+        ///    - the user seeing the bot run ahead of them, into them, or sprint around them, or a bot that never holds
+        ///      still while they stand, means the release distance, the stop distance or the 0.25 m/s test is wrong;
+        ///    - "Timing: follow spot picks" showing a mean of 1 ms or more a call, or a frame of 3 ms or more, with the
+        ///      bots trailing (about one pick a second each) sends the re-aim rate down;
+        ///    - any exception naming McsBaseLayer.EndFollowWalk, FollowTrail or FollowWatch is a bug to fix before anything else.
+        ///    Measured: nothing yet (no raid has run v15).
         /// </summary>
-        public const int ForkVersion = 14;
+        public const int ForkVersion = 15;
 
         /// <summary>Short label used in logs and the overlay.</summary>
-        public const string Label = "C2/SAIN fork v14";
+        public const string Label = "C2/SAIN fork v15";
     }
 }

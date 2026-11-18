@@ -1048,6 +1048,14 @@ namespace MiyakoCarryService.Client.Mgrs
         {
             var mcsBotPlayer = ctx.McsBotPlayer;
             var botOwner = mcsBotPlayer.AIData.BotOwner;
+            // Fork v15: log the command with the bot's distance and mover state before anything below stops it, and let the
+            // follow state know, so the walk after it starts at once (C2Sain/FollowWatch.cs).
+            var followData = botOwner.GetMcsBotPlayerData();
+            if (followData != null)
+            {
+                C2Sain.FollowWatch.LogForceTeleport(followData, botOwner);
+                followData.Fork.Follow.OnTeleport(Time.time);
+            }
             var stationary = botOwner.WeaponManager?.Stationary;
             if (stationary != null && stationary.CurLink != null && stationary.Taken)
             {

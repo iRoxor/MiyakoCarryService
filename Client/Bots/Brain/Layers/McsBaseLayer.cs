@@ -513,6 +513,13 @@ namespace MiyakoCarryService.Client.Bots.Brain.Layers
 
         public virtual bool EndGoToPoint()
         {
+            // Fork v15: a follow walk (Mcs:TooFar or Mcs:TooClose, begun by McsBrainLayer's follow branch) is ended,
+            // re-aimed and re-pathed by Core/FollowTrail's rules; every other walk keeps MCS's rules below.
+            if (McsBotPlayerData != null && McsBotPlayerData.Fork.Follow.Active && C2Sain.FollowWatch.TrailOn)
+            {
+                return EndFollowWalk();
+            }
+
             if (IsApproachingThreat())
             {
                 return true;
@@ -545,6 +552,8 @@ namespace MiyakoCarryService.Client.Bots.Brain.Layers
 
                 if (Time.time - BotOwner.Mover._lastTimePosChanged > 30f && BotOwner.Position.McsSqrDistance(mcsLeadPlayerPos) >= TOO_FAR_FROM_LEAD_DISTANCE * TOO_FAR_FROM_LEAD_DISTANCE)
                 {
+                    C2Sain.FollowWatch.LogAutoTeleport(McsBotPlayerData, BotOwner, CurrentAction?.Reason ?? "a walk", Time.time - BotOwner.Mover._lastTimePosChanged); // Fork v15: diagnostic log
+                    McsBotPlayerData.Fork.Follow.OnTeleport(Time.time); // Fork v15
                     BotOwner.StopMove();
                     BotOwner.Mover.AllowTeleport();
                     BotOwner.GetPlayer.Teleport(McsBotPlayerData.LeadPlayer.Position, true);
@@ -576,6 +585,137 @@ namespace MiyakoCarryService.Client.Bots.Brain.Layers
                     return true;
                 }
                 return false;
+            }
+        }
+
+        /// <summary>
+        /// Fork v15: ends, re-aims or re-paths a follow walk (Mcs:TooFar, Mcs:TooClose) once a frame, by the rules of
+        /// Core/FollowTrail.cs, instead of MCS's "ends on arrival, or after 6 s without a 2 m move".
+        /// The walk goes on while the player keeps moving: each time its spot goes stale it is replaced by one near
+        /// where the player is now (about once a second), arrival at a stale spot does not end it, and it ends
+        /// (so the bot holds) only when the bot is close and the player has slowed. A bot that stands still for 2 s
+        /// is re-pathed on the navmesh route; after 6 s the walk ends and starts again. Also writes the stall log
+        /// lines (FollowWatch.Poll) and keeps MCS's own 30 s teleport, now logged.
+        /// Side effects: may change _currentMoveTarget and the bot's walk target and path, may teleport the bot, may
+        /// make it jump (CheckStuck, as before), reads the player's velocity.
+        /// </summary>
+        /// <returns>True when the walk should end (BigBrain then asks the layer for a new action).</returns>
+        protected virtual bool EndFollowWalk()
+        {
+            var data = McsBotPlayerData;
+            if (IsApproachingThreat())
+            {
+                return true;
+            }
+
+            var lead = data.LeadPlayer;
+            if (lead == null || lead.HealthController == null || !lead.HealthController.IsAlive)
+            {
+                return true;
+            }
+
+            var follow = data.Fork.Follow;
+            var now = Time.time;
+            var leadPos = lead.Position;
+            var reason = CurrentAction?.Reason;
+
+            // MCS's stuck handling, as in EndGoToPoint; a bot copying a prone player stands on purpose and is never stuck.
+            if (!follow.ExpectsMotion)
+            {
+                RefreshStuckTimer();
+            }
+            else if (BotOwner.Mover._lastTimePosChanged + 1f < now)
+            {
+                CheckStuck();
+            }
+
+            // MCS's own teleport, unchanged: 30 s without a 2 m move, 20 m or more from the player.
+            if (now - BotOwner.Mover._lastTimePosChanged > 30f && BotOwner.Position.McsSqrDistance(leadPos) >= TOO_FAR_FROM_LEAD_DISTANCE * TOO_FAR_FROM_LEAD_DISTANCE)
+            {
+                C2Sain.FollowWatch.LogAutoTeleport(data, BotOwner, reason ?? "following", now - BotOwner.Mover._lastTimePosChanged);
+                follow.OnTeleport(now);
+                BotOwner.StopMove();
+                BotOwner.Mover.AllowTeleport();
+                BotOwner.GetPlayer.Teleport(lead.Position, true);
+                var playerPosition = data.Player.Position;
+                BotOwner.Mover._lastGoodCastPoint = BotOwner.Mover._prevSuccessLinkedFrom = BotOwner.Mover._prevLinkPos = BotOwner.Mover.PositionOnWayInner = playerPosition;
+                BotOwner.Mover._lastGoodCastPointTime = now;
+                BotOwner.Mover._prevPosLinkedTime = 0f;
+                BotOwner.Mover.SetPlayerToNavMesh(playerPosition);
+                BotOwner.Mover.RecalcWay();
+                BotOwner.Mover.Pause = true;
+                UpdateLeadNearMoveTarget(leadPos, out _);
+                if (_currentMoveTarget.HasValue)
+                {
+                    BotOwner.GoToSomePointData.SetPoint(_currentMoveTarget.Value);
+                }
+                return true;
+            }
+
+            var arrived = BotOwner.GoToSomePointData.IsCome();
+            var spotToLead = _currentMoveTarget.HasValue ? Vector3.Distance(_currentMoveTarget.Value, leadPos) : float.PositiveInfinity;
+            var step = follow.Tick(now, C2Sain.FollowWatch.ToV3(BotOwner.Position), C2Sain.FollowWatch.ToV3(leadPos),
+                C2Sain.FollowWatch.LeadSpeed(lead), arrived, spotToLead, C2Sain.FollowWatch.FollowDistance, C2Sain.FollowWatch.Settings);
+            C2Sain.FollowWatch.Poll(data, BotOwner, reason, _currentMoveTarget, arrived);
+
+            switch (step)
+            {
+                case C2Sain.Core.FollowStep.Stop:
+                case C2Sain.Core.FollowStep.GiveUp:
+                    return true;
+                case C2Sain.Core.FollowStep.Retarget:
+                    RetargetFollow(leadPos);
+                    return false;
+                case C2Sain.Core.FollowStep.Repath:
+                    RetargetFollow(leadPos);
+                    RepathFollow();
+                    return false;
+                default:
+                    return false;
+            }
+        }
+
+        /// <summary>
+        /// Fork v15: aims a follow walk at where the player is now. Picks a new follow spot, ignoring the "keep the
+        /// spot until the player has moved 3 m" rule (UpdateLeadNearMoveTarget keeps it only while _lastTargetPos is
+        /// set), holds the throttle on the next ordinary refresh, and sends the bot's walk target there. Writes
+        /// _currentMoveTarget, _lastTargetPos, _nextUpdatePosTime and the bot's GoToSomePointData.
+        /// </summary>
+        /// <param name="leadPos">The player's position.</param>
+        protected void RetargetFollow(Vector3 leadPos)
+        {
+            _lastTargetPos = null;
+            UpdateLeadNearMoveTarget(leadPos, out var nextTime);
+            _nextUpdatePosTime = Time.time + nextTime;
+            ApplyMovePoint();
+        }
+
+        /// <summary>
+        /// Fork v15: makes the mover start a new path to the current walk target now. Gets a lying bot up, then hands
+        /// the mover the navmesh path MCS itself computes (the same BotOwner.GoToByWay MCS's melee logic uses), which
+        /// does not depend on the mover's own core-point path finder or on its start core point (stale after a
+        /// teleport). When there is no complete navmesh path it forces the mover's own path (force = true skips its
+        /// "already on this way" shortcut). Does nothing during a NavBridge gap crossing. Writes the bot's mover path.
+        /// </summary>
+        protected void RepathFollow()
+        {
+            if (!_currentMoveTarget.HasValue || NavBridge.IsCrossing)
+            {
+                return;
+            }
+            var target = _currentMoveTarget.Value;
+            var lay = BotOwner.BotLay;
+            if (lay != null && lay.IsLay)
+            {
+                lay.GetUp(false);
+            }
+            if (C2Sain.C2Nav.TryCompletePath(BotOwner.Position, target, out var corners) && corners.Length > 1)
+            {
+                BotOwner.GoToByWay(corners, -1f);
+            }
+            else
+            {
+                BotOwner.GoToPoint(target, true, -1f, false, false, true, true, false);
             }
         }
 
@@ -654,6 +794,8 @@ namespace MiyakoCarryService.Client.Bots.Brain.Layers
 
                 if (Time.time - BotOwner.Mover._lastTimePosChanged > 30f && BotOwner.Position.McsSqrDistance(mcsLeadPlayerPos) >= TOO_FAR_FROM_LEAD_DISTANCE * TOO_FAR_FROM_LEAD_DISTANCE)
                 {
+                    C2Sain.FollowWatch.LogAutoTeleport(McsBotPlayerData, BotOwner, "escorting", Time.time - BotOwner.Mover._lastTimePosChanged); // Fork v15: diagnostic log
+                    McsBotPlayerData.Fork.Follow.OnTeleport(Time.time); // Fork v15
                     BotOwner.StopMove();
                     BotOwner.Mover.AllowTeleport();
                     BotOwner.GetPlayer.Teleport(McsBotPlayerData.LeadPlayer.Position, true);
@@ -711,6 +853,8 @@ namespace MiyakoCarryService.Client.Bots.Brain.Layers
 
                 if (Time.time - BotOwner.Mover._lastTimePosChanged > 30f && BotOwner.Position.McsSqrDistance(mcsLeadPlayerPos) >= TOO_FAR_FROM_LEAD_DISTANCE * TOO_FAR_FROM_LEAD_DISTANCE)
                 {
+                    C2Sain.FollowWatch.LogAutoTeleport(McsBotPlayerData, BotOwner, "protecting", Time.time - BotOwner.Mover._lastTimePosChanged); // Fork v15: diagnostic log
+                    McsBotPlayerData.Fork.Follow.OnTeleport(Time.time); // Fork v15
                     BotOwner.StopMove();
                     BotOwner.Mover.AllowTeleport();
                     BotOwner.GetPlayer.Teleport(McsBotPlayerData.LeadPlayer.Position, true);

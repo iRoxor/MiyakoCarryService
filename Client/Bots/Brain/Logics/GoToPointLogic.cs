@@ -2,6 +2,7 @@
 using DrakiaXYZ.BigBrain.Brains;
 using EFT;
 using MiyakoCarryService.Client.Extensions;
+using UnityEngine;
 
 namespace MiyakoCarryService.Client.Bots.Brain.Logics
 {
@@ -30,6 +31,33 @@ namespace MiyakoCarryService.Client.Bots.Brain.Logics
             var leaderMovementContext = leadPlayer.MovementContext;
             var botWithin50 = botToLeaderSqrDistance < 50f * 50f;
             var leaderRelativeSpeed = leaderMovementContext.MaxSpeed > 0f ? leaderMovementContext.CharacterMovementSpeed / leaderMovementContext.MaxSpeed : 0f;
+
+            // Fork v15: a bot beyond the follow distance sprints whatever the player's pose or speed setting, and keeps
+            // doing so until it is close; only then does it copy their pose and speed (Core/FollowTrail.ChoosePace).
+            // v14 copied them within 50 m, so a crouching, slow-walking or prone player could not be caught up with.
+            if (C2Sain.FollowWatch.TrailOn && C2Sain.MovePolicy.CopiesLeaderPose(BotOwner, mcsBotPlayerData, true))
+            {
+                var pace = mcsBotPlayerData.Fork.Follow.ChoosePace(Time.time, Mathf.Sqrt(botToLeaderSqrDistance), C2Sain.FollowWatch.FollowDistance,
+                    leaderMovementContext.IsInPronePose, leaderMovementContext.PoseLevel, leaderRelativeSpeed, C2Sain.FollowWatch.Settings);
+                if (pace == C2Sain.Core.FollowPace.CopyProne)
+                {
+                    _baseLogic.DoorOpen();
+                    BotOwner.BotLight?.TurnOff(false, true);
+                    BotOwner.GoToSomePointData.UpdateToGo(false, 0f, leaderMovementContext.PoseLevel);
+                }
+                else if (pace == C2Sain.Core.FollowPace.CopySlow)
+                {
+                    _baseLogic.DoorOpen();
+                    BotOwner.BotLight?.TurnOff(false, true);
+                    BotOwner.GoToSomePointData.UpdateToGo(false, leaderMovementContext.CharacterMovementSpeed, leaderMovementContext.PoseLevel);
+                }
+                else
+                {
+                    BotOwner.Sprint(true, false);
+                    _baseLogic.UpdateNodeByMain(data);
+                }
+                return;
+            }
 
             // Fork: copy the player's pose only while following or escorting, never on a job of the bot's
             // own or in combat (upstream tested the game's enemy memory instead). C2Sain/MovePolicy.cs.

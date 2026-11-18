@@ -35,6 +35,7 @@ namespace MiyakoCarryService.Client.C2Sain
         public static ConfigEntry<float> ChaseMaxSeconds;
         public static ConfigEntry<float> ReturnRadius;
         public static ConfigEntry<float> FollowDistance;
+        public static ConfigEntry<bool> FollowTrail;
         public static ConfigEntry<float> BreakOffArriveRadius;
         public static ConfigEntry<float> BreakOffTimeout;
         public static ConfigEntry<float> BreakOffGrace;
@@ -117,6 +118,8 @@ namespace MiyakoCarryService.Client.C2Sain
             ChaseMaxSeconds = Float(plugin, "ChaseMax", 5f, 0f, 60f);
             ReturnRadius = Float(plugin, "ReturnRadius", 6f, 2f, 30f);
             FollowDistance = Float(plugin, "FollowDistance", 8f, 3f, 20f);
+            // Fork v15: trailing, the catch-up pace and the stall re-path (Core/FollowTrail.cs). Off keeps v14's follow rules.
+            FollowTrail = Bool(plugin, "FollowTrail", true);
             BreakOffArriveRadius = Float(plugin, "BreakOffArrive", 3f, 1.5f, 10f);
             BreakOffTimeout = Float(plugin, "BreakOffTimeout", 20f, 5f, 60f);
             BreakOffGrace = Float(plugin, "BreakOffGrace", 10f, 0f, 60f);

@@ -1,4 +1,5 @@
-// StrobeRules.cs -- the timing and visibility rules of the carry bots' two markers (fork v12).
+// StrobeRules.cs -- the timing and visibility rules of the carry bots' two markers (fork v12; v13 shortened
+// the IR flashes and keeps the IR light off while ECOTI's thermal view is on the goggles).
 //
 // Used by C2Sain/StrobeMarkers.cs, which makes the markers and applies these rules every frame.
 // Unity-free so the logic harness (.for-claude-to-reference/harnesses/mcs_fork_logic) can pin the
@@ -7,15 +8,17 @@
 // Why: through ECOTI's thermal clip-on a carry bot is a hot body like any enemy, because ECOTI never
 // looks at a player's side, group or team (its code reads none; no setting changes it). The fork, which
 // makes the teammates, marks them instead, with two markers that only the matching view shows:
-//   - the thermal ID beacon: a small solid marker over the head whose heat value pulses between hot and
+//   - the thermal ID beacon: a small solid marker on the helmet whose heat value pulses between hot and
 //     cold, as if a rotating heated element sat inside it. It carries a heat value ECOTI's heat shader
 //     reads (_CotiHeatTemp, Kelvin) and is drawn only while one of ECOTI's thermal cameras (named
 //     "Coti...") renders, so the naked eye and night vision never see it. No real thermal device strobes,
 //     so this is a pulse, not a flash.
-//   - the IR strobe: a small red light on the helmet that blinks in a pattern (the double flash by
-//     default) and shines only while night vision is on (EFT's IkLight does the per-camera part), the way
-//     the game's own IR lights do.
-// The research behind it: miyako-carry-service/evidence/2026-11-18-coti-heat-research.
+//   - the IR strobe: a small red light on the helmet that flashes quickly in a pattern (the double flash by
+//     default) and shines only while night vision is on and ECOTI's thermal view is not (a thermal view
+//     cannot see an IR light). StrobeMarkers switches the light itself, so its brightness and reach are the
+//     F12 settings' own, whatever BorkelRNVG multiplies for the game's IR flashlights.
+// The research behind it: miyako-carry-service/evidence/2026-11-18-coti-heat-research. The user's first test of
+// build 12 (miyako-carry-service/evidence/2026-11-18-build-12-first-raid) led to the v13 changes.
 
 using System;
 
@@ -24,7 +27,7 @@ namespace MiyakoCarryService.Client.C2Sain.Core
     /// <summary>How the IR strobe blinks.</summary>
     public enum IrPattern
     {
-        /// <summary>Two short flashes close together, then dark: two 0.12 s flashes 0.16 s apart every 1.5 s (the default).</summary>
+        /// <summary>Two quick flashes close together, then dark: two 0.05 s flashes 0.10 s apart every 1.5 s (the default).</summary>
         DoubleFlash = 0,
 
         /// <summary>One second on, one second off.</summary>
@@ -37,17 +40,29 @@ namespace MiyakoCarryService.Client.C2Sain.Core
         Steady = 3,
     }
 
-    /// <summary>Tunables for <see cref="StrobeRules"/>; the plugin changes only the thermal period and heat from its settings.</summary>
+    /// <summary>Tunables for <see cref="StrobeRules"/>; the plugin sets the thermal period and heat and whether the IR strobe hides under ECOTI from its settings.</summary>
     public sealed class StrobeSettings
     {
         /// <summary>Seconds in one cycle of the double flash.</summary>
         public double DoubleFlashPeriod = 1.5;
 
-        /// <summary>Seconds each of the double flash's two flashes lasts. Longer than one tick of ECOTI's 60 Hz thermal sensor, so none is missed.</summary>
-        public double FlashSeconds = 0.12;
+        /// <summary>
+        /// Seconds each of the double flash's two flashes lasts. 0.05 s is three frames at 60 fps and still a frame
+        /// at 25 fps, so a flash is not lost on a slow frame, yet it reads as the sharp quick flash of a fire alarm's
+        /// strobe. Build 12 used 0.12 s, which the user found too long on their first test (2026-11-18).
+        /// </summary>
+        public double FlashSeconds = 0.05;
 
-        /// <summary>Seconds from the start of the double flash's first flash to the start of its second (a 0.16 s gap).</summary>
-        public double SecondFlashAt = 0.28;
+        /// <summary>Seconds from the start of the double flash's first flash to the start of its second (a 0.10 s gap; build 12's was 0.16 s).</summary>
+        public double SecondFlashAt = 0.15;
+
+        /// <summary>
+        /// Whether the IR strobe stays off while ECOTI's thermal view is on the goggles: a thermal view cannot see an
+        /// IR light, and under ECOTI's Outline mode the night vision picture stays on screen, so the strobe was still
+        /// seen there (the user's first test of build 12). The plugin sets this from the "hide IR strobe under ECOTI"
+        /// setting.
+        /// </summary>
+        public bool HideIrUnderThermal = true;
 
         /// <summary>Seconds in one cycle of the slow blink (half on, half off).</summary>
         public double SlowBlinkPeriod = 2.0;
@@ -155,10 +170,15 @@ namespace MiyakoCarryService.Client.C2Sain.Core
             return cameraIsThermal && thermalSwitchOn;
         }
 
-        /// <summary>The IR light shines only while its switch is on, the pattern is in a flash and night vision is on.</summary>
-        public static bool IrLightOn(bool irSwitchOn, bool inFlash, bool nightVisionOn)
+        /// <summary>
+        /// The IR light shines only while its switch is on, the pattern is in a flash and night vision is on, and not
+        /// while ECOTI's thermal view is on the goggles when <see cref="StrobeSettings.HideIrUnderThermal"/> is set.
+        /// </summary>
+        /// <param name="thermalViewOn">ECOTI's thermal overlay is up on the player's goggles (EcotiProbe).</param>
+        /// <param name="settings">Supplies <see cref="StrobeSettings.HideIrUnderThermal"/>.</param>
+        public static bool IrLightOn(bool irSwitchOn, bool inFlash, bool nightVisionOn, bool thermalViewOn, StrobeSettings settings)
         {
-            return irSwitchOn && inFlash && nightVisionOn;
+            return irSwitchOn && inFlash && nightVisionOn && !(thermalViewOn && settings.HideIrUnderThermal);
         }
 
         private static double Wrap(double seconds, double period)

@@ -420,11 +420,78 @@ namespace MiyakoCarryService.Client.C2Sain
         ///    - a long frame (40 ms or more) inside a carry bot's UpdateManual in the recorder, with every
         ///      Timing switch on and no "fork cost:" line at its frame number (give or take one), means the
         ///      fork's cost is in something not timed: add that kind.
-        ///    Measured: nothing yet (no raid has run v12).
+        ///    Result (2026-11-18, the user's first raid with v12: Interchange, one carry bot, the user closed the
+        ///    game by force about 48 s into it, so it has no raid-end lines; evidence/2026-11-18-build-12-first-raid):
+        ///    - Planner: 6 guard plans, all outdoors (no indoor plan ran, so the indoor slicing and the indoor
+        ///      no-post rate are untested). Work 0-17 ms (median 2; the 17 ms one was the raid's first plan), 1-8
+        ///      frames, worst frame 0.4-4.6 ms (median 2.0; falsifier 6 ms), ready 0.00-0.13 s after it was asked
+        ///      for (median 0.01 s; falsifier 0.4 s). No Timing switch was on, so there are no "fork cost:" lines.
+        ///    - No "markers: switched off" line and no exception naming MCS or the fork in BepInEx's log, the
+        ///      Unity log or the game's errors.log (689 entries, none about MCS or the fork).
+        ///    - Markers, from the user's report and two screenshots (a GPNVG-18 with ECOTI, Outline mode): the
+        ///      thermal beacon was drawn by ECOTI's thermal view and pulsed hot and cold, and did not show with the
+        ///      ECOTI clip-ons off; the IR strobe showed through night vision. So the heat-by-property route works
+        ///      (v12 falsifier not fired) and the beacon was not seen through plain night vision. A check with
+        ///      night vision off was not reported. Four things were wrong, all changed in v13: the IR light lit
+        ///      the scene like a ceiling lamp (the setting was 6 m, and BorkelRNVG, whose IR flashlight multipliers
+        ///      are 2 and 1.5 here, made it 12 m and 2.25); its 0.12 s flashes were too long beside a fire alarm's
+        ///      quick flash; it was still seen with ECOTI's thermal on the goggles; and the beacon hung above the
+        ///      character instead of sitting on it (0.4 m above the head bone; a helmet's top is about 0.2 m above
+        ///      it, from the screenshots).
+        /// 13 (2026-11-18) Test build 13: the carry bot markers, after the user's first test of build 12.
+        ///    Measured before it: the Result of v12 above, with ECOTI 3.5.1's code (Coti.Client.dll IL) and
+        ///    BorkelRNVG's (IkLightAwakePatch), both read 2026-11-18.
+        ///    Changed:
+        ///    - The IR strobe is a plain red point light of the fork's own, not EFT's IkLight. BorkelRNVG's
+        ///      IkLightAwakePatch multiplies an IkLight's range and brightness by its IR flashlight multipliers
+        ///      (2 and 1.5 in the user's com.borkel.nvgmasks.cfg) and again whenever those settings change, so v12's
+        ///      light was not the 6 m and 1.5 set. The new light is as set: reach 1 m (setting IrRadius), brightness
+        ///      3 (IrBrightness). By Unity's built-in point-light fall-off, roughly 1/(1+25(d/reach)^2), that is
+        ///      strong within about a quarter of a metre and gone at 1 m: the helmet and shoulders, not the
+        ///      scene (an estimate, not measured). The fork switches the light on only while night vision is on, the
+        ///      pattern is in a flash and the rule below allows it. Brightness and reach follow their settings
+        ///      within 0.25 s (v12 remade the lights).
+        ///    - The double flash is two 0.05 s flashes 0.10 s apart every 1.5 s (v12: 0.12 s flashes 0.16 s
+        ///      apart). 0.05 s is three frames at 60 fps and still one at 25. A frame longer than 50 ms can skip a
+        ///      flash.
+        ///    - The IR strobe stays off while ECOTI's thermal view is up on the goggles (setting IrHideUnderEcoti,
+        ///      default on; a thermal view cannot see an IR light). Core/EcotiProbe.cs reads the static bool
+        ///      Coti.Client.CotiState.Active by reflection ten times a second; it is true while the goggles' thermal
+        ///      is shown. Not used: "a camera named Coti... rendered", because ECOTI's 1x camera also renders for a
+        ///      powered thermal riser on the held weapon, aimed or not (CotiCameraDuty.OneX), which would hide the
+        ///      strobe all the time for a player who keeps a riser on. A riser's scope view is not covered: its lens
+        ///      is heat only. If ECOTI is absent or its state cannot be read the strobe is simply not hidden.
+        ///    - The beacon and the IR light sit on the helmet: 0.24 m above the head bone (setting MarkerHeight; v12
+        ///      0.4), the beacon 0.15 m wide (BeaconSize; v12 0.22). The helmet top is estimated at 0.2 m above the
+        ///      head bone from the screenshots, so a marker may sink a little into the helmet or hang a little over it.
+        ///    - Four settings with new defaults were renamed, because a BepInEx entry keeps the value in the file
+        ///      and a changed default would not have reached an install that holds v12's: StrobeHeight to
+        ///      MarkerHeight, StrobeSize to BeaconSize, StrobeIrIntensity to IrBrightness, StrobeIrRange to
+        ///      IrRadius. The old entries stay in the file, unread.
+        ///    Diagnostics: "markers: made for ..." says "reach" where v12 said "range"; with the diagnostic log on,
+        ///    "markers: ECOTI thermal state: ..." (once a raid: where the state is read from, or why it cannot be)
+        ///    and "markers: ECOTI thermal view on/off; the IR strobe is hidden/shown again" at each change. The
+        ///    summary tool prints these from v13.
+        ///    Pooling: UNRESTRICTED for everything v12 measures. No decision a bot makes changed; the markers and
+        ///    their own log lines did (the wording of "made for" aside, no record field was repurposed).
+        ///    Falsifiers (written before any v13 raid):
+        ///    - the IR flash still lighting the ground or walls a few metres round the bot (the user's eye), or
+        ///      not visible at 30 m through night vision, sends IrRadius and IrBrightness back (down, or up);
+        ///    - the IR strobe flashing through ECOTI's thermal on the goggles while the setting is on and the log
+        ///      has "ECOTI thermal view on" means the hiding is wrong; no "ECOTI thermal state: read from ..."
+        ///      line (the log says "not loaded" or "no class ..." instead) means ECOTI's state could not be read,
+        ///      and the rule needs a different source;
+        ///    - the IR strobe missing with night vision on and no ECOTI thermal on the goggles means the hiding
+        ///      fires when it should not (look for "ECOTI thermal view on" with the clip-on switched off);
+        ///    - the beacon still hanging clear above the helmet, or sunk so far into it that its outline is
+        ///      lost (the user's eye), changes MarkerHeight; a beacon too small to see through ECOTI at 100 m
+        ///      changes BeaconSize;
+        ///    - a "markers: switched off ... after an error" line is a bug to fix before anything else.
+        ///    Measured: nothing yet (no raid has run v13).
         /// </summary>
-        public const int ForkVersion = 12;
+        public const int ForkVersion = 13;
 
         /// <summary>Short label used in logs and the overlay.</summary>
-        public const string Label = "C2/SAIN fork v12";
+        public const string Label = "C2/SAIN fork v13";
     }
 }

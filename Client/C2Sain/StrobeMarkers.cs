@@ -1,7 +1,8 @@
-// StrobeMarkers.cs -- the two markers that tell carry bots from enemies through ECOTI and night vision (fork v12).
+// StrobeMarkers.cs -- the two markers that tell carry bots from enemies through ECOTI and night vision (fork v12;
+// v13 sat them on the helmet, made the IR light small and quick, and keeps it off while ECOTI's thermal is on).
 //
 // Why: through ECOTI's thermal clip-on a carry bot is a hot body like any enemy; ECOTI reads no side, group or
-// team. The fork, which makes the teammates, adds two small markers over each carry bot's head, and each view
+// team. The fork, which makes the teammates, adds two small markers on each carry bot's helmet, and each view
 // shows only its own (rules and timings: Core/StrobeRules.cs; research and decisions:
 // miyako-carry-service/IR-STROBE-PLAN.md and evidence/2026-11-18-coti-heat-research):
 //   - the thermal ID beacon: a small solid hexagonal prism with its own heat value. ECOTI draws the world with
@@ -10,24 +11,27 @@
 //     (StrobeRules.ThermalCelsius) as if a heated element turned inside it. Its renderer is switched on only
 //     in the pre-cull step of ECOTI's thermal cameras (names starting "Coti"), so the naked eye, night vision
 //     and every other camera never draw it.
-//   - the IR strobe: a small red point light with EFT's own IkLight on it, so the game switches it off unless
-//     night vision is on (and BorkelRNVG scales it like the game's other IR lights). Its Light.enabled follows
-//     the blink pattern (double flash by default).
+//   - the IR strobe: a small red point light of the fork's own. Build 12 used EFT's IkLight on it, but
+//     BorkelRNVG multiplies an IkLight's range and brightness for IR flashlights (2 and 1.5 on the user's
+//     install), so the light reached about 12 m and lit the scene like a lamp. The fork now switches the light
+//     itself, with its own brightness and reach: on only while night vision is on, the blink pattern is in a
+//     flash (a quick double flash by default) and ECOTI's thermal view is not up on the goggles (EcotiProbe: a
+//     thermal view cannot see an IR light).
 // Both are children of nothing: Update (once a frame, from GameLoop.Update) and the first pre-cull of each
-// frame put them a little above the head bone's position, so a crouching or prone bot carries them with it.
+// frame put them a little above the head bone's position (default 0.24 m, the crown of a helmet), so a
+// crouching or prone bot carries them with it.
 //
 // Owner of the markers (one pair per living carry bot, keyed by profile id), of the subscription to
-// Camera.onPreCull and of the camera-name cache; main thread only. The settings are the F12 "Markers: ..." ones
-// (ForkConfig), read live; the IR light's brightness and range are applied when a marker is made, because
-// IkLight remembers them, so changing one remakes the markers. Clear (BrainMgr.OnRaidEnded) destroys
-// everything and unsubscribes. Any exception turns the markers off for the rest of the raid and is logged once;
-// they cannot change what a bot does. With "Debug: diagnostic log" on, each marker made is logged. Reads and
-// writes no files.
+// Camera.onPreCull, of the camera-name cache and of the EcotiProbe; main thread only. The settings are the F12
+// "Markers: ..." ones (ForkConfig), read live; Sync puts the IR light's brightness and reach on the existing
+// lights within a quarter of a second of a change. Clear (BrainMgr.OnRaidEnded) destroys everything and
+// unsubscribes. Any exception turns the markers off for the rest of the raid and is logged once; they cannot
+// change what a bot does. With "Debug: diagnostic log" on, each marker made and each change of ECOTI's thermal
+// view is logged. Reads and writes no files.
 
 using System.Collections.Generic;
 using EFT;
 using EFT.CameraControl;
-using EFT.Visual;
 using MiyakoCarryService.Client.C2Sain.Core;
 using MiyakoCarryService.Client.Mgrs;
 using MiyakoCarryService.Client.Utils;
@@ -46,15 +50,22 @@ namespace MiyakoCarryService.Client.C2Sain
         private static readonly List<string> _gone = new();
         private static readonly int _heatKelvinId = Shader.PropertyToID("_CotiHeatTemp");
         private static readonly int _heatCelsiusId = Shader.PropertyToID("_HeatTemp");
+        private static readonly EcotiProbe _ecoti = new();
         private static Mesh _prism;
         private static bool _subscribed;
         private static bool _faulted;
+        private static bool _thermalViewOn;
+        private static bool _ecotiLogged;
         private static int _positionedFrame = -1;
         private static int _madeCount;
         private static float _nextSync;
+        private static float _nextEcotiPoll;
 
         /// <summary>Seconds between looks at which carry bots are alive (the list is built fresh each time, so not every frame).</summary>
         private const float SYNC_INTERVAL = 0.25f;
+
+        /// <summary>Seconds between reads of ECOTI's thermal state: a read by reflection boxes a value, so not every frame.</summary>
+        private const float ECOTI_POLL_INTERVAL = 0.1f;
 
         private static McsMgr McsMgr => field ??= MgrAccessor.Get<McsMgr>();
 
@@ -72,8 +83,6 @@ namespace MiyakoCarryService.Client.C2Sain
             public bool BeaconOn;
             public GameObject IrObject;
             public Light IrLight;
-            public float AppliedIntensity;
-            public float AppliedRange;
             public bool HasBeacon;
             public bool HasIr;
             public bool IrOn;
@@ -115,15 +124,17 @@ namespace MiyakoCarryService.Client.C2Sain
                 }
                 _settings.ThermalPeriod = ForkConfig.StrobeThermalPeriod?.Value ?? 2f;
                 _settings.HotCelsius = ForkConfig.StrobeThermalHeat?.Value ?? 65f;
+                _settings.HideIrUnderThermal = ForkConfig.IrHideUnderEcoti?.Value != false;
                 var pattern = ForkConfig.StrobeIrPattern?.Value ?? IrPattern.DoubleFlash;
                 var nightVision = NightVisionOn();
+                var thermalView = wantIr && _settings.HideIrUnderThermal && EcotiThermalOn();
                 var now = Time.time;
                 foreach (var marker in _markers.Values)
                 {
                     if (marker.IrLight != null)
                     {
                         var lit = StrobeRules.IrLit(pattern, now + marker.Phase, _settings);
-                        var on = StrobeRules.IrLightOn(wantIr, lit, nightVision);
+                        var on = StrobeRules.IrLightOn(wantIr, lit, nightVision, thermalView, _settings);
                         if (marker.IrOn != on)
                         {
                             marker.IrOn = on;
@@ -157,7 +168,41 @@ namespace MiyakoCarryService.Client.C2Sain
             _thermalCameras.Clear();
             _positionedFrame = -1;
             _nextSync = 0f;
+            _nextEcotiPoll = 0f;
+            _thermalViewOn = false;
+            _ecotiLogged = false;
+            _ecoti.Reset();
             _faulted = false;
+        }
+
+        /// <summary>
+        /// Whether ECOTI's thermal view is up on the player's goggles, read through <see cref="EcotiProbe"/> a few times
+        /// a second. With "Debug: diagnostic log" on it logs where the state is read from (once a raid) and each change.
+        /// </summary>
+        private static bool EcotiThermalOn()
+        {
+            var now = Time.unscaledTime;
+            if (now < _nextEcotiPoll)
+            {
+                return _thermalViewOn;
+            }
+            _nextEcotiPoll = now + ECOTI_POLL_INTERVAL;
+            var on = _ecoti.GoggleThermalOn();
+            var log = ForkConfig.DebugLog?.Value == true;
+            if (!_ecotiLogged && log)
+            {
+                _ecotiLogged = true;
+                McsLogger.LogInfo($"[{ForkLog.Tag}] markers: ECOTI thermal state: {_ecoti.Status}");
+            }
+            if (on != _thermalViewOn)
+            {
+                _thermalViewOn = on;
+                if (log)
+                {
+                    McsLogger.LogInfo($"[{ForkLog.Tag}] markers: ECOTI thermal view {(on ? "on" : "off")}; the IR strobe is {(on ? "hidden" : "shown again")} (night vision {(NightVisionOn() ? "on" : "off")})");
+                }
+            }
+            return _thermalViewOn;
         }
 
         /// <summary>Makes sure the pre-cull handler is subscribed.</summary>
@@ -230,11 +275,16 @@ namespace MiyakoCarryService.Client.C2Sain
             return thermal;
         }
 
-        /// <summary>Puts both markers of every bot a little above its head bone, whatever way the head tilts.</summary>
+        /// <summary>
+        /// Puts both markers of every bot above its head bone (default 0.24 m, the crown of a helmet), whatever way the
+        /// head tilts. The head bone sits about 0.2 m below a helmet's top: estimated from the user's first build 12
+        /// screenshots, where the beacon at 0.4 m hung about 0.09 m clear of the helmet (a guess good to a few
+        /// centimetres, so the marker may sink a little into the helmet or hang a little above it).
+        /// </summary>
         private static void Position()
         {
-            var height = ForkConfig.StrobeHeight?.Value ?? 0.4f;
-            var size = ForkConfig.StrobeSize?.Value ?? 0.22f;
+            var height = ForkConfig.MarkerHeight?.Value ?? 0.24f;
+            var size = ForkConfig.BeaconSize?.Value ?? 0.15f;
             foreach (var marker in _markers.Values)
             {
                 if (marker.Head == null)
@@ -255,14 +305,15 @@ namespace MiyakoCarryService.Client.C2Sain
         }
 
         /// <summary>
-        /// Makes markers for carry bots that have none, destroys those whose bot is gone, and remakes a bot's markers
-        /// when a marker was switched on or off in the settings or the IR light's brightness or range changed.
+        /// Makes markers for carry bots that have none, destroys those whose bot is gone, remakes a bot's markers when a
+        /// marker was switched on or off in the settings, and puts the IR light's brightness and reach on the lights
+        /// that exist.
         /// </summary>
         private static void Sync(bool wantThermal, bool wantIr)
         {
             _alive.Clear();
-            var intensity = ForkConfig.StrobeIrIntensity?.Value ?? 1.5f;
-            var range = ForkConfig.StrobeIrRange?.Value ?? 6f;
+            var intensity = ForkConfig.IrBrightness?.Value ?? 3f;
+            var range = ForkConfig.IrRadius?.Value ?? 1f;
             var index = 0;
             foreach (var bot in McsMgr.GetAllAliveMcsBotPlayer())
             {
@@ -274,14 +325,24 @@ namespace MiyakoCarryService.Client.C2Sain
                 _alive.Add(id);
                 if (_markers.TryGetValue(id, out var marker))
                 {
-                    if (marker.HasBeacon != wantThermal || marker.HasIr != wantIr
-                        || (marker.HasIr && (marker.AppliedIntensity != intensity || marker.AppliedRange != range)))
+                    if (marker.HasBeacon != wantThermal || marker.HasIr != wantIr)
                     {
                         Destroy(marker);
                         _markers.Remove(id);
                     }
                     else
                     {
+                        if (marker.IrLight != null)
+                        {
+                            if (marker.IrLight.intensity != intensity)
+                            {
+                                marker.IrLight.intensity = intensity;
+                            }
+                            if (marker.IrLight.range != range)
+                            {
+                                marker.IrLight.range = range;
+                            }
+                        }
                         index++;
                         continue;
                     }
@@ -371,10 +432,9 @@ namespace MiyakoCarryService.Client.C2Sain
 
             if (wantIr)
             {
-                // The light is made inactive, given its IkLight and wired to it, then switched on: IkLight reads
-                // the light's brightness once, in Awake, and BorkelRNVG scales it there.
+                // A plain light, off until Update lights it for a flash. Build 12 gave it EFT's IkLight, which
+                // BorkelRNVG scales (range x2, brightness x1.5 on the user's install); this one is as set.
                 marker.IrObject = new GameObject("McsForkIrStrobe") { layer = layer };
-                marker.IrObject.SetActive(false);
                 var light = marker.IrObject.AddComponent<Light>();
                 light.type = LightType.Point;
                 light.color = Color.red;
@@ -382,13 +442,8 @@ namespace MiyakoCarryService.Client.C2Sain
                 light.range = range;
                 light.shadows = LightShadows.None;
                 light.enabled = false;
-                var ik = marker.IrObject.AddComponent<IkLight>();
-                ik.Light = light;
-                marker.IrObject.SetActive(true);
                 marker.IrLight = light;
                 marker.HasIr = true;
-                marker.AppliedIntensity = intensity;
-                marker.AppliedRange = range;
             }
 
             _madeCount++;
@@ -396,7 +451,7 @@ namespace MiyakoCarryService.Client.C2Sain
             {
                 McsLogger.LogInfo($"[{ForkLog.Tag}] markers: made for {marker.Name} (number {_madeCount}): "
                     + (wantThermal ? $"thermal beacon on layer {layer}, skin shader {skin.sharedMaterial.shader?.name}" : "no thermal beacon")
-                    + (wantIr ? $", IR strobe (brightness {intensity}, range {range} m)" : ", no IR strobe"));
+                    + (wantIr ? $", IR strobe (brightness {intensity}, reach {range} m)" : ", no IR strobe"));
             }
             return marker;
         }

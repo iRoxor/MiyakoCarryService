@@ -58,13 +58,14 @@ namespace MiyakoCarryService.Client.C2Sain
         public static ConfigEntry<float> PlannerBudgetMs;
         public static ConfigEntry<bool> StrobeThermal;
         public static ConfigEntry<bool> StrobeIr;
+        public static ConfigEntry<bool> IrHideUnderEcoti;
         public static ConfigEntry<Core.IrPattern> StrobeIrPattern;
         public static ConfigEntry<float> StrobeThermalPeriod;
         public static ConfigEntry<float> StrobeThermalHeat;
-        public static ConfigEntry<float> StrobeHeight;
-        public static ConfigEntry<float> StrobeSize;
-        public static ConfigEntry<float> StrobeIrIntensity;
-        public static ConfigEntry<float> StrobeIrRange;
+        public static ConfigEntry<float> MarkerHeight;
+        public static ConfigEntry<float> BeaconSize;
+        public static ConfigEntry<float> IrBrightness;
+        public static ConfigEntry<float> IrRadius;
         public static ConfigEntry<bool> CostPlanner;
         public static ConfigEntry<bool> CostDefend;
         public static ConfigEntry<bool> CostFlank;
@@ -134,13 +135,18 @@ namespace MiyakoCarryService.Client.C2Sain
             PlannerBudgetMs = Float(plugin, "PlannerBudget", 3f, 0.5f, 30f);
             StrobeThermal = Bool(plugin, "StrobeThermal", true);
             StrobeIr = Bool(plugin, "StrobeIr", true);
+            IrHideUnderEcoti = Bool(plugin, "IrHideUnderEcoti", true);
             StrobeIrPattern = Enum(plugin, "StrobeIrPattern", Core.IrPattern.DoubleFlash);
             StrobeThermalPeriod = Float(plugin, "StrobeThermalPeriod", 2f, 0.5f, 10f);
             StrobeThermalHeat = Float(plugin, "StrobeThermalHeat", 65f, 30f, 120f);
-            StrobeHeight = Float(plugin, "StrobeHeight", 0.4f, 0.1f, 1.5f);
-            StrobeSize = Float(plugin, "StrobeSize", 0.22f, 0.05f, 0.8f);
-            StrobeIrIntensity = Float(plugin, "StrobeIrIntensity", 1.5f, 0.1f, 10f);
-            StrobeIrRange = Float(plugin, "StrobeIrRange", 6f, 1f, 20f);
+            // Fork v13 renamed these four so their new defaults reach installs that already hold v12's values (a
+            // BepInEx entry keeps the value in the file): MarkerHeight was StrobeHeight (0.4), BeaconSize was
+            // StrobeSize (0.22), IrBrightness was StrobeIrIntensity (1.5) and IrRadius was StrobeIrRange (6). The
+            // old entries stay in the file, unread.
+            MarkerHeight = Float(plugin, "MarkerHeight", 0.24f, 0.05f, 1.5f);
+            BeaconSize = Float(plugin, "BeaconSize", 0.15f, 0.05f, 0.8f);
+            IrBrightness = Float(plugin, "IrBrightness", 3f, 0.1f, 20f);
+            IrRadius = Float(plugin, "IrRadius", 1f, 0.2f, 20f);
             CostPlanner = Bool(plugin, "CostPlanner", false);
             CostDefend = Bool(plugin, "CostDefend", false);
             CostFlank = Bool(plugin, "CostFlank", false);

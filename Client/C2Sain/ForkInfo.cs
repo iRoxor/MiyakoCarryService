@@ -630,6 +630,13 @@ namespace MiyakoCarryService.Client.C2Sain
         ///      prone player stands on purpose and is never re-pathed. MCS's own 30 s teleport (20 m or more away) is kept.
         ///    - After a teleport (MCS's own, or the Force Teleport command) the next walk starts on the navmesh route at
         ///      once, and the stall wait is 1 s instead of 2 for 4 s, so the bot does not stand 7 s as in the v13 raid.
+        ///    - "The player is moving" is the larger of the game's velocity reading (Player.Velocity, the character
+        ///      controller's velocity, read from the game's IL) and the speed measured from how far their position moved
+        ///      over 0.2 s, so a velocity that reads zero in the game cannot make a walking player look still and turn
+        ///      trailing back into stop and go; the harness cannot know what the game's velocity reads.
+        ///    - A fault in the new rules must not break a bot: an exception in a follow walk's end check, in the re-path, in
+        ///      the speed rule or in reading the player's speed is logged ("... failed: ...", at most once every 30 s,
+        ///      with or without the diagnostic log) and the bot carries on under MCS's own v14 rules for that walk or frame.
         ///    Unchanged: the brain reasons Mcs:Default, Mcs:TooFar, Mcs:TooClose, Mcs:Partoling (the stats tool reads them),
         ///    the follow-distance setting's meaning as the start distance, Partoling, formation following, escorts and
         ///    every other walk (they keep EndGoToPoint's rules), and the markers.
@@ -666,7 +673,11 @@ namespace MiyakoCarryService.Client.C2Sain
         ///      still while they stand, means the release distance, the stop distance or the 0.25 m/s test is wrong;
         ///    - "Timing: follow spot picks" showing a mean of 1 ms or more a call, or a frame of 3 ms or more, with the
         ///      bots trailing (about one pick a second each) sends the re-aim rate down;
-        ///    - any exception naming McsBaseLayer.EndFollowWalk, FollowTrail or FollowWatch is a bug to fix before anything else.
+        ///    - any "... failed:" error line from the follow code ("the follow walk's end check", "the follow re-path",
+        ///      "the follow speed rule", "player speed") is a bug to fix before anything else: the bot fell back to MCS's own
+        ///      rules for that walk, so the line says where the new rules broke;
+        ///    - bots that stop while the player walks (Default->TooFar entries as above, with "follow stall:" lines absent) with
+        ///      the log's "moving N m/s" reading 0 would mean even the position measure failed: check Core/FollowTrail.ObservePlayer.
         ///    Measured: nothing yet (no raid has run v15).
         /// </summary>
         public const int ForkVersion = 15;

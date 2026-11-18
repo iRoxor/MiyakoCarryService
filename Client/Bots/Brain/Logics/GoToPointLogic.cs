@@ -1,4 +1,5 @@
 
+using System;
 using DrakiaXYZ.BigBrain.Brains;
 using EFT;
 using MiyakoCarryService.Client.Extensions;
@@ -37,26 +38,35 @@ namespace MiyakoCarryService.Client.Bots.Brain.Logics
             // v14 copied them within 50 m, so a crouching, slow-walking or prone player could not be caught up with.
             if (C2Sain.FollowWatch.TrailOn && C2Sain.MovePolicy.CopiesLeaderPose(BotOwner, mcsBotPlayerData, true))
             {
-                var pace = mcsBotPlayerData.Fork.Follow.ChoosePace(Time.time, Mathf.Sqrt(botToLeaderSqrDistance), C2Sain.FollowWatch.FollowDistance,
-                    leaderMovementContext.IsInPronePose, leaderMovementContext.PoseLevel, leaderRelativeSpeed, C2Sain.FollowWatch.Settings);
-                if (pace == C2Sain.Core.FollowPace.CopyProne)
+                try
                 {
-                    _baseLogic.DoorOpen();
-                    BotOwner.BotLight?.TurnOff(false, true);
-                    BotOwner.GoToSomePointData.UpdateToGo(false, 0f, leaderMovementContext.PoseLevel);
+                    var pace = mcsBotPlayerData.Fork.Follow.ChoosePace(Time.time, Mathf.Sqrt(botToLeaderSqrDistance), C2Sain.FollowWatch.FollowDistance,
+                        leaderMovementContext.IsInPronePose, leaderMovementContext.PoseLevel, leaderRelativeSpeed, C2Sain.FollowWatch.Settings);
+                    if (pace == C2Sain.Core.FollowPace.CopyProne)
+                    {
+                        _baseLogic.DoorOpen();
+                        BotOwner.BotLight?.TurnOff(false, true);
+                        BotOwner.GoToSomePointData.UpdateToGo(false, 0f, leaderMovementContext.PoseLevel);
+                    }
+                    else if (pace == C2Sain.Core.FollowPace.CopySlow)
+                    {
+                        _baseLogic.DoorOpen();
+                        BotOwner.BotLight?.TurnOff(false, true);
+                        BotOwner.GoToSomePointData.UpdateToGo(false, leaderMovementContext.CharacterMovementSpeed, leaderMovementContext.PoseLevel);
+                    }
+                    else
+                    {
+                        BotOwner.Sprint(true, false);
+                        _baseLogic.UpdateNodeByMain(data);
+                    }
+                    return;
                 }
-                else if (pace == C2Sain.Core.FollowPace.CopySlow)
+                catch (Exception e)
                 {
-                    _baseLogic.DoorOpen();
-                    BotOwner.BotLight?.TurnOff(false, true);
-                    BotOwner.GoToSomePointData.UpdateToGo(false, leaderMovementContext.CharacterMovementSpeed, leaderMovementContext.PoseLevel);
+                    // A fault in the new speed rule must not stop the bot walking: log it (at most every 30 s) and
+                    // let MCS's own rule below move it this frame.
+                    C2Sain.FollowWatch.Fault("the follow speed rule (this frame falls back to MCS's own rule)", e);
                 }
-                else
-                {
-                    BotOwner.Sprint(true, false);
-                    _baseLogic.UpdateNodeByMain(data);
-                }
-                return;
             }
 
             // Fork: copy the player's pose only while following or escorting, never on a job of the bot's

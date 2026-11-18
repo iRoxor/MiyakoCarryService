@@ -890,7 +890,7 @@ namespace MiyakoCarryService.Client.Bots.Brain.Layers
                 if (trail)
                 {
                     var wasTrailing = follow.Trailing;
-                    wantsWalk = follow.WantsWalk(time, Mathf.Sqrt(sqrDistance), IsBeyondFollowDistance(sqrDistance), tooClose,
+                    wantsWalk = follow.WantsWalk(time, C2Sain.FollowWatch.ToV3(mcsLeadPlayerPos), Mathf.Sqrt(sqrDistance), IsBeyondFollowDistance(sqrDistance), tooClose,
                         C2Sain.FollowWatch.LeadSpeed(McsBotPlayerData.LeadPlayer), C2Sain.FollowWatch.FollowDistance, C2Sain.FollowWatch.Settings);
                     if (wantsWalk && follow.Trailing && !wasTrailing)
                     {

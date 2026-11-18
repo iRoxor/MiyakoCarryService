@@ -517,7 +517,17 @@ namespace MiyakoCarryService.Client.Bots.Brain.Layers
             // re-aimed and re-pathed by Core/FollowTrail's rules; every other walk keeps MCS's rules below.
             if (McsBotPlayerData != null && McsBotPlayerData.Fork.Follow.Active && C2Sain.FollowWatch.TrailOn)
             {
-                return EndFollowWalk();
+                try
+                {
+                    return EndFollowWalk();
+                }
+                catch (Exception e)
+                {
+                    // A fault in the new rules must not break the bot: log it (at most every 30 s) and let MCS's own
+                    // rules below take this walk. The next follow walk tries the new rules again.
+                    C2Sain.FollowWatch.Fault("the follow walk's end check (this walk falls back to MCS's own rules)", e);
+                    McsBotPlayerData.Fork.Follow.OnDecision();
+                }
             }
 
             if (IsApproachingThreat())
@@ -703,19 +713,27 @@ namespace MiyakoCarryService.Client.Bots.Brain.Layers
             {
                 return;
             }
-            var target = _currentMoveTarget.Value;
-            var lay = BotOwner.BotLay;
-            if (lay != null && lay.IsLay)
+            try
             {
-                lay.GetUp(false);
+                var target = _currentMoveTarget.Value;
+                var lay = BotOwner.BotLay;
+                if (lay != null && lay.IsLay)
+                {
+                    lay.GetUp(false);
+                }
+                if (C2Sain.C2Nav.TryCompletePath(BotOwner.Position, target, out var corners) && corners.Length > 1)
+                {
+                    BotOwner.GoToByWay(corners, -1f);
+                }
+                else
+                {
+                    BotOwner.GoToPoint(target, true, -1f, false, false, true, true, false);
+                }
             }
-            if (C2Sain.C2Nav.TryCompletePath(BotOwner.Position, target, out var corners) && corners.Length > 1)
+            catch (Exception e)
             {
-                BotOwner.GoToByWay(corners, -1f);
-            }
-            else
-            {
-                BotOwner.GoToPoint(target, true, -1f, false, false, true, true, false);
+                // The game calls above are the part of v15 no harness reaches; a fault must leave the bot as it was.
+                C2Sain.FollowWatch.Fault("the follow re-path", e);
             }
         }
 

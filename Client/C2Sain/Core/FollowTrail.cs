@@ -25,7 +25,8 @@
 //   Re-aim  -- while it walks, its spot is replaced (about once a second at most) when it has gone stale, that is
 //              farther than SpotMaxDistance from the player; a bot that has arrived at a stale spot gets a new one at once.
 //   Stop    -- it stops only when it is within the stop distance and the player has been slower than MovingSpeed for
-//              SlowSeconds (or it has arrived at a good spot while the player is slow).
+//              SlowSeconds (or it has arrived at a good spot while the player is slow). The player's speed is the larger
+//              of the game's velocity reading and the speed measured from their position (UsePositionSpeed).
 //   Stall   -- a bot that has not moved ProgressMetres in StallSeconds is re-pathed; after GiveUpStalls of them the
 //              walk ends and starts again (what MCS's old 6 s exit did). A bot just teleported gets the shorter
 //              TeleportStallSeconds, because it must start walking at once.
@@ -93,6 +94,19 @@ namespace MiyakoCarryService.Client.C2Sain.Core
 
         /// <summary>The player counts as moving at or above this horizontal speed (m/s). A creeping player moves at 0.3 m/s or more.</summary>
         public float MovingSpeed = 0.25f;
+
+        /// <summary>
+        /// True also measures the player's speed from how far their position moved since the last sample (the larger of
+        /// that and the game's velocity reading counts), so a velocity that reads zero in the game can never make a walking
+        /// player look still. The harness cannot show what the game's velocity reads.
+        /// </summary>
+        public bool UsePositionSpeed = true;
+
+        /// <summary>Seconds between position samples for <see cref="UsePositionSpeed"/>; shorter reacts sooner, longer averages out jitter.</summary>
+        public float PositionSpeedWindow = 0.2f;
+
+        /// <summary>A position sample older than this (s) is not used to measure speed: the bot was not watching in between.</summary>
+        public float PositionSpeedMaxGap = 1f;
 
         /// <summary>The player must stay slower than <see cref="MovingSpeed"/> this long (s) before a close bot may stop, so a glance round does not stop it.</summary>
         public float SlowSeconds = 1f;
@@ -175,6 +189,10 @@ namespace MiyakoCarryService.Client.C2Sain.Core
         // ---- the player's speed ----
         private bool _slow;
         private float _slowSince;
+        private bool _hasLead;
+        private V3 _leadAt;
+        private float _leadTime;
+        private float _positionSpeed;
 
         // ---- progress and stalls ----
         private bool _hasClock;
@@ -218,7 +236,7 @@ namespace MiyakoCarryService.Client.C2Sain.Core
         /// <summary>Times the walk gave up in the current stall (cleared when it ends).</summary>
         public int GiveUps { get; private set; }
 
-        /// <summary>The player's latest horizontal speed (m/s) given to <see cref="Tick"/> or <see cref="WantsWalk"/>.</summary>
+        /// <summary>The player's latest horizontal speed (m/s) the bot used: the game's velocity reading or the speed measured from their position, whichever is larger.</summary>
         public float LeadSpeed { get; private set; }
 
         /// <summary>
@@ -304,14 +322,37 @@ namespace MiyakoCarryService.Client.C2Sain.Core
         }
 
         /// <summary>
-        /// Records the player's horizontal speed. The player counts as slow once they have been below MovingSpeed
-        /// continuously (the clock restarts whenever they move).
+        /// Records the player's horizontal speed: the game's velocity reading, or (UsePositionSpeed) the speed measured
+        /// from how far their position moved over the last PositionSpeedWindow seconds when that is larger. The player
+        /// counts as slow once they have been below MovingSpeed continuously (the clock restarts whenever they move).
         /// </summary>
         /// <param name="now">Game time in seconds.</param>
-        /// <param name="speed">The player's horizontal speed (m/s).</param>
+        /// <param name="speed">The player's horizontal speed (m/s) as the game reports it.</param>
+        /// <param name="lead">The player's position.</param>
         /// <param name="settings">Tunables.</param>
-        public void ObservePlayer(float now, float speed, FollowSettings settings)
+        public void ObservePlayer(float now, float speed, V3 lead, FollowSettings settings)
         {
+            if (settings.UsePositionSpeed)
+            {
+                var elapsed = now - _leadTime;
+                if (!_hasLead || elapsed < 0f || elapsed > settings.PositionSpeedMaxGap)
+                {
+                    // First sample, a clock that went back, or a gap in which nobody was watching: start over.
+                    _hasLead = true;
+                    _leadAt = lead;
+                    _leadTime = now;
+                    _positionSpeed = 0f;
+                }
+                else if (elapsed >= settings.PositionSpeedWindow)
+                {
+                    var dx = lead.X - _leadAt.X;
+                    var dz = lead.Z - _leadAt.Z;
+                    _positionSpeed = (float)Math.Sqrt(dx * dx + dz * dz) / elapsed;
+                    _leadAt = lead;
+                    _leadTime = now;
+                }
+                speed = Math.Max(speed, _positionSpeed);
+            }
             LeadSpeed = speed;
             if (speed >= settings.MovingSpeed)
             {
@@ -338,15 +379,16 @@ namespace MiyakoCarryService.Client.C2Sain.Core
         /// keeps walking until it is within the stop distance and the player has slowed; anything else holds.
         /// </summary>
         /// <param name="now">Game time in seconds.</param>
+        /// <param name="lead">The player's position.</param>
         /// <param name="distance">Metres from the bot to the player.</param>
         /// <param name="beyond">McsBaseLayer.IsBeyondFollowDistance: the bot is at or beyond the follow distance.</param>
         /// <param name="tooClose">The bot is within 2 m of the player.</param>
-        /// <param name="leadSpeed">The player's horizontal speed (m/s).</param>
+        /// <param name="leadSpeed">The player's horizontal speed (m/s) as the game reports it.</param>
         /// <param name="followDistance">The follow-distance setting (m).</param>
         /// <param name="settings">Tunables.</param>
-        public bool WantsWalk(float now, float distance, bool beyond, bool tooClose, float leadSpeed, float followDistance, FollowSettings settings)
+        public bool WantsWalk(float now, V3 lead, float distance, bool beyond, bool tooClose, float leadSpeed, float followDistance, FollowSettings settings)
         {
-            ObservePlayer(now, leadSpeed, settings);
+            ObservePlayer(now, leadSpeed, lead, settings);
             if (beyond)
             {
                 Trailing = settings.Trail;
@@ -431,14 +473,14 @@ namespace MiyakoCarryService.Client.C2Sain.Core
         /// <param name="now">Game time in seconds.</param>
         /// <param name="bot">The bot's position.</param>
         /// <param name="lead">The player's position.</param>
-        /// <param name="leadSpeed">The player's horizontal speed (m/s).</param>
+        /// <param name="leadSpeed">The player's horizontal speed (m/s) as the game reports it.</param>
         /// <param name="arrived">The bot is at its walk target (BotGoToPointData.IsCome).</param>
         /// <param name="spotToLead">Metres from the walk target to the player; float.PositiveInfinity when there is no target.</param>
         /// <param name="followDistance">The follow-distance setting (m).</param>
         /// <param name="settings">Tunables.</param>
         public FollowStep Tick(float now, V3 bot, V3 lead, float leadSpeed, bool arrived, float spotToLead, float followDistance, FollowSettings settings)
         {
-            ObservePlayer(now, leadSpeed, settings);
+            ObservePlayer(now, leadSpeed, lead, settings);
             var distance = V3.Distance(bot, lead);
             var distances = DistancesFor(followDistance, settings);
             if (!_hasClock)

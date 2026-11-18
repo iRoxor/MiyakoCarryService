@@ -57,7 +57,7 @@ namespace MiyakoCarryService.Client.C2Sain
         /// <param name="v">The position.</param>
         public static V3 ToV3(Vector3 v) => new(v.x, v.y, v.z);
 
-        /// <summary>The player's horizontal speed (m/s) from their velocity; 0 when the player is unknown.</summary>
+        /// <summary>The player's horizontal speed (m/s) from their velocity; 0 when the player is unknown or the game cannot say.</summary>
         /// <param name="player">The lead player.</param>
         public static float LeadSpeed(Player player)
         {
@@ -65,8 +65,39 @@ namespace MiyakoCarryService.Client.C2Sain
             {
                 return 0f;
             }
-            var v = player.Velocity;
-            return Mathf.Sqrt(v.x * v.x + v.z * v.z);
+            try
+            {
+                var v = player.Velocity;
+                return Mathf.Sqrt(v.x * v.x + v.z * v.z);
+            }
+            catch (Exception e)
+            {
+                Fault("player speed", e);
+                return 0f;
+            }
+        }
+
+        /// <summary>
+        /// Writes one error line for a fault in the follow code, at most one every 30 s, and nothing else: callers carry on
+        /// (the fork's new follow rules must never be what breaks a bot; EndGoToPoint hands a walk whose new rules threw
+        /// to MCS's own rules). Never throws.
+        /// </summary>
+        /// <param name="what">What was running, for the line.</param>
+        /// <param name="e">The exception.</param>
+        public static void Fault(string what, Exception e)
+        {
+            try
+            {
+                if (Time.time >= _nextErrorLog)
+                {
+                    _nextErrorLog = Time.time + ERROR_LOG_INTERVAL;
+                    McsLogger.LogError($"[{ForkLog.Tag}] {what} failed: {e}");
+                }
+            }
+            catch (Exception)
+            {
+                // Logging itself failed; there is nothing left to report to.
+            }
         }
 
         /// <summary>
@@ -93,7 +124,7 @@ namespace MiyakoCarryService.Client.C2Sain
                 {
                     McsLogger.LogInfo($"[{ForkLog.Tag}] follow stall: {Name(data)} has stood still {seconds:0} s on its walk to you ({reason}); "
                         + $"{DescribeWhere(data, bot, target, arrived)}; path to the spot: {DescribePath(bot, target)}; "
-                        + $"mover: {DescribeMover(bot)}; speed rule: {DescribePace(data)}; you: {DescribePlayer(data.LeadPlayer)}; "
+                        + $"mover: {DescribeMover(bot)}; speed rule: {DescribePace(data)}; you: {DescribePlayer(data.LeadPlayer, follow)}; "
                         + $"{follow.Repaths} re-path(s) so far");
                 }
                 if (ended)
@@ -239,8 +270,11 @@ namespace MiyakoCarryService.Client.C2Sain
             }
         }
 
-        /// <summary>Your pose and speed as the movement context reports them, with your speed over the ground.</summary>
-        private static string DescribePlayer(Player lead)
+        /// <summary>
+        /// Your pose and speed setting as the movement context reports them, and your speed over the ground twice: by the
+        /// game's velocity and as the bot counted it (the larger of that and the speed measured from your position).
+        /// </summary>
+        private static string DescribePlayer(Player lead, FollowTrail follow)
         {
             if (lead == null)
             {
@@ -251,7 +285,7 @@ namespace MiyakoCarryService.Client.C2Sain
                 var movement = lead.MovementContext;
                 var pose = movement.IsInPronePose ? "prone" : movement.PoseLevel < 1f ? $"crouched ({movement.PoseLevel:0.00})" : "standing";
                 var share = movement.MaxSpeed > 0f ? movement.CharacterMovementSpeed / movement.MaxSpeed : 0f;
-                return $"{pose}, speed setting {share:0%} of your maximum, moving {LeadSpeed(lead):0.0} m/s";
+                return $"{pose}, speed setting {share:0%} of your maximum, moving {LeadSpeed(lead):0.0} m/s by the game's velocity, {follow.LeadSpeed:0.0} m/s as the bot counted it";
             }
             catch (Exception e)
             {
@@ -276,14 +310,10 @@ namespace MiyakoCarryService.Client.C2Sain
 
         private static string YesNo(bool value) => value ? "yes" : "no";
 
-        /// <summary>Writes one error line for a fault in this watch, at most one every 30 s.</summary>
+        /// <summary>Writes one error line for a fault in this watch's own logging, at most one every 30 s.</summary>
         private static void LogFault(string what, Exception e)
         {
-            if (Time.time >= _nextErrorLog)
-            {
-                _nextErrorLog = Time.time + ERROR_LOG_INTERVAL;
-                McsLogger.LogError($"[{ForkLog.Tag}] {what} log failed: {e}");
-            }
+            Fault($"{what} log", e);
         }
     }
 }

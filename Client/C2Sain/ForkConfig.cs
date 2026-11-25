@@ -36,6 +36,8 @@ namespace MiyakoCarryService.Client.C2Sain
         public static ConfigEntry<float> ReturnRadius;
         public static ConfigEntry<float> FollowDistance;
         public static ConfigEntry<bool> FollowTrail;
+        public static ConfigEntry<float> FollowCatchUp;
+        public static ConfigEntry<bool> ReachSnap;
         public static ConfigEntry<float> BreakOffArriveRadius;
         public static ConfigEntry<float> BreakOffTimeout;
         public static ConfigEntry<float> BreakOffGrace;
@@ -82,6 +84,7 @@ namespace MiyakoCarryService.Client.C2Sain
         public static ConfigEntry<bool> CostFoliageSight;
         public static ConfigEntry<bool> CostDecisions;
         public static ConfigEntry<bool> CostStrobe;
+        public static ConfigEntry<bool> CostReachWatch;
         public static ConfigEntry<float> CostThresholdMs;
         public static ConfigEntry<bool> DebugLog;
 
@@ -97,6 +100,7 @@ namespace MiyakoCarryService.Client.C2Sain
                 Core.CostKind.FollowSpot => CostFollowSpot,
                 Core.CostKind.FoliageSight => CostFoliageSight,
                 Core.CostKind.Strobe => CostStrobe,
+                Core.CostKind.ReachWatch => CostReachWatch,
                 _ => CostDecisions,
             };
         }
@@ -120,9 +124,15 @@ namespace MiyakoCarryService.Client.C2Sain
             FollowDistance = Float(plugin, "FollowDistance", 8f, 3f, 20f);
             // Fork v15: trailing, the catch-up pace and the stall re-path (Core/FollowTrail.cs). Off keeps v14's follow rules.
             FollowTrail = Bool(plugin, "FollowTrail", true);
+            // Fork v17: a bot with no complete path to you for this long is teleported near you (0 = off); a bot off the walkable
+            // ground is put back on it (ReachSnap). Core/ReachWatch.cs, C2Sain/ReachWatch.cs.
+            FollowCatchUp = Float(plugin, "FollowCatchUp", 10f, 0f, 120f);
+            ReachSnap = Bool(plugin, "ReachSnap", true);
             BreakOffArriveRadius = Float(plugin, "BreakOffArrive", 3f, 1.5f, 10f);
+            // Fork v17: BreakOffTimeout now means seconds WITHOUT GETTING CLOSER (it was seconds since the start), and
+            // BreakOffGrace's default is 30 (it was 10; MigrateDefaults moves a file that still holds 10).
             BreakOffTimeout = Float(plugin, "BreakOffTimeout", 20f, 5f, 60f);
-            BreakOffGrace = Float(plugin, "BreakOffGrace", 10f, 0f, 60f);
+            BreakOffGrace = Float(plugin, "BreakOffGrace", 30f, 0f, 60f);
             // Fork v11: the stances replace AllowedPersonalities, EngageMax and ReportEngages (their old
             // entries stay in the file, unread). The Team stance commands write Stance, so it carries over.
             Stance = Enum(plugin, "Stance", Core.CarryStance.Defensive);
@@ -173,13 +183,14 @@ namespace MiyakoCarryService.Client.C2Sain
             CostFoliageSight = Bool(plugin, "CostFoliageSight", false);
             CostDecisions = Bool(plugin, "CostDecisions", false);
             CostStrobe = Bool(plugin, "CostStrobe", false);
+            CostReachWatch = Bool(plugin, "CostReachWatch", false);
             CostThresholdMs = Float(plugin, "CostThreshold", 2f, 0.5f, 50f);
             DebugLog = Bool(plugin, "DebugLog", false);
             MigrateDefaults();
         }
 
         /// <summary>The settings version this build writes into the hidden SettingsVersion entry; raise it when a default changes.</summary>
-        private const int SETTINGS_VERSION = 14;
+        private const int SETTINGS_VERSION = 15;
 
         /// <summary>
         /// BepInEx keeps the value already in the config file when a build changes a setting's default, so a new default
@@ -187,9 +198,11 @@ namespace MiyakoCarryService.Client.C2Sain
         /// in the file. Instead, once per settings version, a setting whose file value still equals its OLD default (the
         /// user never moved it) is set to the NEW default; a value the user changed is never touched. Fork v14: IrBrightness
         /// 3 to 12 (the strobe was too dim) and StrobeThermalPeriod 2 to 1 (the pole's patterns read better quicker).
-        /// A user who had set exactly the old value by choice sees it change once. Side effect: writes the config file
-        /// when it moves a value, and records the version in the hidden SettingsVersion entry. Called at the end of
-        /// <see cref="Bind"/>.
+        /// Fork v17 (version 15): BreakOffGrace 10 to 30 (a recall's no-chase and no-flank time; the user's 2026-11-24 report was
+        /// that bots went straight back into the fight after Break off and Regroup). The steps run in order, so a file still at
+        /// version 13 or lower gets all of them. A user who had set exactly the old value by choice sees it change once. Side
+        /// effect: writes the config file when it moves a value, and records the version in the hidden SettingsVersion entry.
+        /// Called at the end of <see cref="Bind"/>.
         /// </summary>
         private static void MigrateDefaults()
         {
@@ -197,8 +210,12 @@ namespace MiyakoCarryService.Client.C2Sain
             {
                 return;
             }
-            MoveDefault(IrBrightness, 3f, 12f);
-            MoveDefault(StrobeThermalPeriod, 2f, 1f);
+            if (SettingsVersion.Value < 14)
+            {
+                MoveDefault(IrBrightness, 3f, 12f);
+                MoveDefault(StrobeThermalPeriod, 2f, 1f);
+            }
+            MoveDefault(BreakOffGrace, 10f, 30f);
             SettingsVersion.Value = SETTINGS_VERSION;
         }
 

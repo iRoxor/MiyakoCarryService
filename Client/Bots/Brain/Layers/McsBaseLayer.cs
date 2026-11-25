@@ -513,6 +513,10 @@ namespace MiyakoCarryService.Client.Bots.Brain.Layers
 
         public virtual bool EndGoToPoint()
         {
+            // Fork v17: the "trail:" diagnostic line, every 2 s while a bot walks to the player 12 m or more behind (a follow walk or a
+            // recall walk); it does nothing for any other walk and with the diagnostic log off.
+            C2Sain.FollowWatch.LogTrail(McsBotPlayerData, BotOwner, CurrentAction?.Reason, _currentMoveTarget);
+
             // Fork v15: a follow walk (Mcs:TooFar or Mcs:TooClose, begun by McsBrainLayer's follow branch) is ended,
             // re-aimed and re-pathed by Core/FollowTrail's rules; every other walk keeps MCS's rules below.
             if (McsBotPlayerData != null && McsBotPlayerData.Fork.Follow.Active && C2Sain.FollowWatch.TrailOn)
@@ -563,17 +567,8 @@ namespace MiyakoCarryService.Client.Bots.Brain.Layers
                 if (Time.time - BotOwner.Mover._lastTimePosChanged > 30f && BotOwner.Position.McsSqrDistance(mcsLeadPlayerPos) >= TOO_FAR_FROM_LEAD_DISTANCE * TOO_FAR_FROM_LEAD_DISTANCE)
                 {
                     C2Sain.FollowWatch.LogAutoTeleport(McsBotPlayerData, BotOwner, CurrentAction?.Reason ?? "a walk", Time.time - BotOwner.Mover._lastTimePosChanged); // Fork v15: diagnostic log
-                    McsBotPlayerData.Fork.Follow.OnTeleport(Time.time); // Fork v15
-                    BotOwner.StopMove();
-                    BotOwner.Mover.AllowTeleport();
-                    BotOwner.GetPlayer.Teleport(McsBotPlayerData.LeadPlayer.Position, true);
-                    var playerPosition = McsBotPlayerData.Player.Position;
-                    BotOwner.Mover._lastGoodCastPoint = BotOwner.Mover._prevSuccessLinkedFrom = BotOwner.Mover._prevLinkPos = BotOwner.Mover.PositionOnWayInner = playerPosition;
-                    BotOwner.Mover._lastGoodCastPointTime = Time.time;
-                    BotOwner.Mover._prevPosLinkedTime = 0f;
-                    BotOwner.Mover.SetPlayerToNavMesh(playerPosition);
-                    BotOwner.Mover.RecalcWay();
-                    BotOwner.Mover.Pause = true;
+                    // Fork v17: the one teleport routine (follow state told, mover reset, a walkable landing when the player is off the navmesh).
+                    C2Sain.BotTeleport.Move(BotOwner, McsBotPlayerData, C2Sain.BotTeleport.LandingNear(McsBotPlayerData.LeadPlayer.Position, McsBotPlayerData.Player?.Profile?.Nickname), Time.time, true);
                     UpdateLeadNearMoveTarget(mcsLeadPlayerPos, out float nextTime);
                     if (_currentMoveTarget.HasValue)
                     {
@@ -643,17 +638,8 @@ namespace MiyakoCarryService.Client.Bots.Brain.Layers
             if (now - BotOwner.Mover._lastTimePosChanged > 30f && BotOwner.Position.McsSqrDistance(leadPos) >= TOO_FAR_FROM_LEAD_DISTANCE * TOO_FAR_FROM_LEAD_DISTANCE)
             {
                 C2Sain.FollowWatch.LogAutoTeleport(data, BotOwner, reason ?? "following", now - BotOwner.Mover._lastTimePosChanged);
-                follow.OnTeleport(now);
-                BotOwner.StopMove();
-                BotOwner.Mover.AllowTeleport();
-                BotOwner.GetPlayer.Teleport(lead.Position, true);
-                var playerPosition = data.Player.Position;
-                BotOwner.Mover._lastGoodCastPoint = BotOwner.Mover._prevSuccessLinkedFrom = BotOwner.Mover._prevLinkPos = BotOwner.Mover.PositionOnWayInner = playerPosition;
-                BotOwner.Mover._lastGoodCastPointTime = now;
-                BotOwner.Mover._prevPosLinkedTime = 0f;
-                BotOwner.Mover.SetPlayerToNavMesh(playerPosition);
-                BotOwner.Mover.RecalcWay();
-                BotOwner.Mover.Pause = true;
+                // Fork v17: the one teleport routine (it also tells the follow state, as follow.OnTeleport(now) did here).
+                C2Sain.BotTeleport.Move(BotOwner, data, C2Sain.BotTeleport.LandingNear(lead.Position, data.Player?.Profile?.Nickname), now, true);
                 UpdateLeadNearMoveTarget(leadPos, out _);
                 if (_currentMoveTarget.HasValue)
                 {
@@ -813,17 +799,8 @@ namespace MiyakoCarryService.Client.Bots.Brain.Layers
                 if (Time.time - BotOwner.Mover._lastTimePosChanged > 30f && BotOwner.Position.McsSqrDistance(mcsLeadPlayerPos) >= TOO_FAR_FROM_LEAD_DISTANCE * TOO_FAR_FROM_LEAD_DISTANCE)
                 {
                     C2Sain.FollowWatch.LogAutoTeleport(McsBotPlayerData, BotOwner, "escorting", Time.time - BotOwner.Mover._lastTimePosChanged); // Fork v15: diagnostic log
-                    McsBotPlayerData.Fork.Follow.OnTeleport(Time.time); // Fork v15
-                    BotOwner.StopMove();
-                    BotOwner.Mover.AllowTeleport();
-                    BotOwner.GetPlayer.Teleport(McsBotPlayerData.LeadPlayer.Position, true);
-                    var playerPosition = McsBotPlayerData.Player.Position;
-                    BotOwner.Mover._lastGoodCastPoint = BotOwner.Mover._prevSuccessLinkedFrom = BotOwner.Mover._prevLinkPos = BotOwner.Mover.PositionOnWayInner = playerPosition;
-                    BotOwner.Mover._lastGoodCastPointTime = Time.time;
-                    BotOwner.Mover._prevPosLinkedTime = 0f;
-                    BotOwner.Mover.SetPlayerToNavMesh(playerPosition);
-                    BotOwner.Mover.RecalcWay();
-                    BotOwner.Mover.Pause = true;
+                    // Fork v17: the one teleport routine (it also tells the follow state, as Follow.OnTeleport did here).
+                    C2Sain.BotTeleport.Move(BotOwner, McsBotPlayerData, C2Sain.BotTeleport.LandingNear(McsBotPlayerData.LeadPlayer.Position, McsBotPlayerData.Player?.Profile?.Nickname), Time.time, true);
                     BotOwner.TalkMsg(new McsMsg
                     {
                         PhraseTrigger = EPhraseTrigger.Regroup
@@ -872,17 +849,8 @@ namespace MiyakoCarryService.Client.Bots.Brain.Layers
                 if (Time.time - BotOwner.Mover._lastTimePosChanged > 30f && BotOwner.Position.McsSqrDistance(mcsLeadPlayerPos) >= TOO_FAR_FROM_LEAD_DISTANCE * TOO_FAR_FROM_LEAD_DISTANCE)
                 {
                     C2Sain.FollowWatch.LogAutoTeleport(McsBotPlayerData, BotOwner, "protecting", Time.time - BotOwner.Mover._lastTimePosChanged); // Fork v15: diagnostic log
-                    McsBotPlayerData.Fork.Follow.OnTeleport(Time.time); // Fork v15
-                    BotOwner.StopMove();
-                    BotOwner.Mover.AllowTeleport();
-                    BotOwner.GetPlayer.Teleport(McsBotPlayerData.LeadPlayer.Position, true);
-                    var playerPosition = McsBotPlayerData.Player.Position;
-                    BotOwner.Mover._lastGoodCastPoint = BotOwner.Mover._prevSuccessLinkedFrom = BotOwner.Mover._prevLinkPos = BotOwner.Mover.PositionOnWayInner = playerPosition;
-                    BotOwner.Mover._lastGoodCastPointTime = Time.time;
-                    BotOwner.Mover._prevPosLinkedTime = 0f;
-                    BotOwner.Mover.SetPlayerToNavMesh(playerPosition);
-                    BotOwner.Mover.RecalcWay();
-                    BotOwner.Mover.Pause = true;
+                    // Fork v17: the one teleport routine (it also tells the follow state, as Follow.OnTeleport did here).
+                    C2Sain.BotTeleport.Move(BotOwner, McsBotPlayerData, C2Sain.BotTeleport.LandingNear(McsBotPlayerData.LeadPlayer.Position, McsBotPlayerData.Player?.Profile?.Nickname), Time.time, true);
                     BotOwner.TalkMsg(new McsMsg
                     {
                         PhraseTrigger = EPhraseTrigger.Regroup
@@ -1814,7 +1782,8 @@ namespace MiyakoCarryService.Client.Bots.Brain.Layers
         /// </summary>
         /// <param name="leadPos">The player's position.</param>
         /// <param name="end">The fallback spot (when <paramref name="why"/> is null) or the closest reachable spot found.</param>
-        /// <param name="why">Null for a move; otherwise why the bot stays (C2Nav.TryClosestReachable).</param>
+        /// <param name="why">Null for a move; otherwise why the bot stays (C2Nav.TryClosestReachable). Since fork v17 each line ends
+        /// with " [bot (x, y, z), you (x, y, z), spot (x, y, z)]" (spot "none" when the bot had no path at all).</param>
         private void LogReach(Vector3 leadPos, Vector3 end, string why)
         {
             var fork = McsBotPlayerData?.Fork;
@@ -1831,14 +1800,19 @@ namespace MiyakoCarryService.Client.Bots.Brain.Layers
                     fork.ReachMoveLogged = true;
                     fork.ReachStayLogged = false;
                     McsLogger.LogInfo($"[{C2Sain.ForkLog.Tag}] reach: {name} has no path to you ({toPlayer:0} m away); "
-                        + $"walking to the closest spot it can reach, {Vector3.Distance(end, leadPos):0} m from you");
+                        + $"walking to the closest spot it can reach, {Vector3.Distance(end, leadPos):0} m from you"
+                        + $" [bot {C2Sain.FollowWatch.Place(BotOwner.Position)}, you {C2Sain.FollowWatch.Place(leadPos)}, spot {C2Sain.FollowWatch.Place(end)}]");
                 }
                 return;
             }
             if (!fork.ReachStayLogged)
             {
                 fork.ReachStayLogged = true;
-                McsLogger.LogInfo($"[{C2Sain.ForkLog.Tag}] reach: {name} has no path to you and stays put, {toPlayer:0} m away: {why}");
+                // Fork v17: positions at the end of the line, one decimal; the spot only when there is one (the closest reachable spot is
+                // known only when a path was found), so the next Factory raid shows where the unreachable places are.
+                var spot = why == C2Sain.C2Nav.REACH_NO_CLOSER ? C2Sain.FollowWatch.Place(end) : "none";
+                McsLogger.LogInfo($"[{C2Sain.ForkLog.Tag}] reach: {name} has no path to you and stays put, {toPlayer:0} m away: {why}"
+                    + $" [bot {C2Sain.FollowWatch.Place(BotOwner.Position)}, you {C2Sain.FollowWatch.Place(leadPos)}, spot {spot}]");
             }
         }
 

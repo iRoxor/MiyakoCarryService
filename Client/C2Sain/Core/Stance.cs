@@ -134,17 +134,27 @@ namespace MiyakoCarryService.Client.C2Sain.Core
         }
 
         /// <summary>
-        /// Fills the chase leash's range fields for the stance: 0 for the timed leash, the Aggressive
-        /// range, or float.PositiveInfinity for none.
+        /// The stance's leash range (m) from the player: 0 for the timed leash, the Aggressive range, or
+        /// float.PositiveInfinity for none. Since fork v17 the flank rules and the leash pull read it too
+        /// (C2Sain/EngageTactics.RangeLimit).
         /// </summary>
-        public static void ApplyLeash(CarryStance stance, StanceSettings settings, ChaseLeashSettings leash)
+        public static float RangeLimit(CarryStance stance, StanceSettings settings)
         {
-            leash.RangeLimit = Leash(stance) switch
+            return Leash(stance) switch
             {
                 StanceLeash.Range => settings.AggressiveLeash,
                 StanceLeash.None => float.PositiveInfinity,
                 _ => 0f,
             };
+        }
+
+        /// <summary>
+        /// Fills the chase leash's range fields for the stance: 0 for the timed leash, the Aggressive
+        /// range, or float.PositiveInfinity for none.
+        /// </summary>
+        public static void ApplyLeash(CarryStance stance, StanceSettings settings, ChaseLeashSettings leash)
+        {
+            leash.RangeLimit = RangeLimit(stance, settings);
             leash.ReturnShare = settings.ReturnShare;
         }
     }

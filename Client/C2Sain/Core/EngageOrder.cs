@@ -10,9 +10,12 @@
 //
 // The tactical kind may also run flank legs: the bot walks to a point off to the
 // side of the enemy's last known position, and SAIN takes over from there. A leg
-// ends on arrival, when the enemy comes into view, when the bot is shot at, or
-// after FlankTimeoutSeconds. One leg is run per enemy position; a new leg needs
-// the enemy's known position to move by FlankReplanDistance.
+// ends on arrival, when the enemy comes into view, when the bot is shot at, when the
+// bot strays beyond the stance's leash range from the player (since fork v17), when a
+// recall begins or its grace is running (EndFlank, since v17), or after
+// FlankTimeoutSeconds. One leg is run per enemy position; a new leg needs
+// the enemy's known position to move by FlankReplanDistance. Whether a leg may be
+// planned at all near the leash range is Core/LeashRules.cs.
 
 namespace MiyakoCarryService.Client.C2Sain.Core
 {
@@ -26,7 +29,7 @@ namespace MiyakoCarryService.Client.C2Sain.Core
         Reckless,
     }
 
-    /// <summary>Why a flank leg ended.</summary>
+    /// <summary>Why a flank leg ended. Append new reasons at the end: the names appear in log lines the tools read.</summary>
     public enum FlankEnd
     {
         None,
@@ -34,6 +37,12 @@ namespace MiyakoCarryService.Client.C2Sain.Core
         EnemySpotted,
         UnderFire,
         TimedOut,
+
+        /// <summary>Fork v17: the bot was more than the leash range from the player (UpdateFlank).</summary>
+        Leash,
+
+        /// <summary>Fork v17: a recall began or its no-flank grace is running, so the leg was dropped (EndFlank).</summary>
+        Recall,
     }
 
     /// <summary>Tunables for <see cref="EngageOrder"/>.</summary>
@@ -151,14 +160,20 @@ namespace MiyakoCarryService.Client.C2Sain.Core
 
         /// <summary>
         /// Advances a running flank leg. Returns why it ended on this call, or None while it continues
-        /// (or when no leg is running).
+        /// (or when no leg is running). Since fork v17 a leg also ends, as Leash, once the bot is more than the leash
+        /// range from the player: in the user's build 16 raid (2026-11-24) a leg carried an Aggressive bot 105 m out
+        /// and a new one began with it 137 m out. A sighting or being shot at still ends the leg first (SAIN takes
+        /// over, and the leash then vetoes its chases).
         /// </summary>
         /// <param name="now">Game time in seconds.</param>
         /// <param name="distanceToPoint">Metres from the bot to <see cref="FlankPoint"/>.</param>
         /// <param name="enemyVisible">True when the bot can see its enemy.</param>
         /// <param name="underFire">True when the bot was hit or shot at just now.</param>
+        /// <param name="distanceToPlayer">Metres from the bot to the player.</param>
+        /// <param name="rangeLimit">The stance's leash range (m): above 0, the bot may not stray farther from the player; 0 or
+        /// float.PositiveInfinity, no range test.</param>
         /// <param name="settings">Tunables; read on every call.</param>
-        public FlankEnd UpdateFlank(float now, float distanceToPoint, bool enemyVisible, bool underFire, EngageSettings settings)
+        public FlankEnd UpdateFlank(float now, float distanceToPoint, bool enemyVisible, bool underFire, float distanceToPlayer, float rangeLimit, EngageSettings settings)
         {
             if (!FlankActive)
             {
@@ -172,6 +187,10 @@ namespace MiyakoCarryService.Client.C2Sain.Core
             else if (underFire)
             {
                 end = FlankEnd.UnderFire;
+            }
+            else if (rangeLimit > 0f && distanceToPlayer > rangeLimit)
+            {
+                end = FlankEnd.Leash;
             }
             else if (distanceToPoint <= settings.FlankArriveRadius)
             {
@@ -187,6 +206,22 @@ namespace MiyakoCarryService.Client.C2Sain.Core
                 LastFlankEnd = end;
             }
             return end;
+        }
+
+        /// <summary>
+        /// Ends a running flank leg for a reason the leg itself does not test (fork v17: a recall began, or its no-flank grace is
+        /// running). Does nothing and returns false when no leg is running.
+        /// </summary>
+        /// <param name="why">The reason recorded in <see cref="LastFlankEnd"/>.</param>
+        public bool EndFlank(FlankEnd why)
+        {
+            if (!FlankActive)
+            {
+                return false;
+            }
+            FlankActive = false;
+            LastFlankEnd = why;
+            return true;
         }
 
         /// <summary>Forgets any flank leg, planned or running.</summary>

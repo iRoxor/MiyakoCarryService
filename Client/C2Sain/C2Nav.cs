@@ -3,7 +3,9 @@
 //
 // Called by McsBaseLayer.UpdateLeadNearMoveTarget and McsGuardLayer (follow spots), EngageTactics
 // (flank points) and GuardPlanner (reach and cover tests); DescribeCover serves only the diagnostic
-// log (GuardPlanner.DescribePost, OpenGroundWatch). Upstream MCS sampled "the nearest
+// log (GuardPlanner.DescribePost, OpenGroundWatch). Since fork v17 the flank point search also keeps the points within the
+// Aggressive leash's share of the range from the player (Core/LeashRules.cs), and TryNearestWalkable and TryCompletePath serve
+// the reach watch (C2Sain/ReachWatch.cs) and the teleports (BotTeleport). Upstream MCS sampled "the nearest
 // navmesh point" around the player, which can lie behind a wall, in the next room or on another
 // floor, and the bot then pathed there through doors and detours. Here a follow spot, and an
 // indoor guard post, counts only if it is "in the player's space": within 1.5 m of the player's
@@ -213,24 +215,29 @@ namespace MiyakoCarryService.Client.C2Sain
         /// position, 40-85 degrees around from the line between the enemy and the bot, at 0.7 times the
         /// bot's distance (10-40 m) from the enemy. A candidate needs a complete path from the bot that is
         /// at most 2.2 times the straight distance (or that plus 40 m) and never passes within 8 m (or
-        /// 0.4 times the radius) of the enemy. Prefers cover toward the enemy, then the shorter path.
+        /// 0.4 times the radius) of the enemy. Since fork v17 a candidate also has to lie within
+        /// <paramref name="spotLimit"/> of the player (Core/LeashRules.FlankSpotAllowed), so a leg never leads the bot
+        /// off past the Aggressive leash. Prefers cover toward the enemy, then the shorter path.
         /// </summary>
         /// <param name="botPos">The bot's position.</param>
         /// <param name="enemyPos">The enemy's last known position.</param>
         /// <param name="preferredSide">+1 or -1 to try only that side, 0 to try both.</param>
+        /// <param name="playerPos">The player's position (the leash's centre).</param>
+        /// <param name="spotLimit">The farthest from the player a flank point may lie (m); float.PositiveInfinity for no limit
+        /// (Core/LeashRules.FlankSpotLimit).</param>
         /// <param name="spot">The chosen point.</param>
         /// <param name="side">The side it lies on (+1 the bot's right as it faces the enemy, -1 its left).</param>
         /// <returns>False when the enemy is closer than 12 m or farther than 150 m, or no candidate qualifies.</returns>
-        public static bool TryPickFlankSpot(Vector3 botPos, Vector3 enemyPos, int preferredSide, out Vector3 spot, out int side)
+        public static bool TryPickFlankSpot(Vector3 botPos, Vector3 enemyPos, int preferredSide, Vector3 playerPos, float spotLimit, out Vector3 spot, out int side)
         {
             using (ForkCost.Begin(CostKind.Flank))
             {
-                return PickFlankSpot(botPos, enemyPos, preferredSide, out spot, out side);
+                return PickFlankSpot(botPos, enemyPos, preferredSide, playerPos, spotLimit, out spot, out side);
             }
         }
 
         /// <summary>The work of <see cref="TryPickFlankSpot"/>, which only adds the fork v12 timing scope around it.</summary>
-        private static bool PickFlankSpot(Vector3 botPos, Vector3 enemyPos, int preferredSide, out Vector3 spot, out int side)
+        private static bool PickFlankSpot(Vector3 botPos, Vector3 enemyPos, int preferredSide, Vector3 playerPos, float spotLimit, out Vector3 spot, out int side)
         {
             spot = default;
             side = 0;
@@ -261,6 +268,10 @@ namespace MiyakoCarryService.Client.C2Sain
                         continue;
                     }
                     var p = hit.position;
+                    if (!LeashRules.FlankSpotAllowed(Vector3.Distance(p, playerPos), spotLimit))
+                    {
+                        continue;
+                    }
                     if (Mathf.Abs(p.y - enemyPos.y) > 6f || !TryCompletePath(botPos, p, out var corners))
                     {
                         continue;

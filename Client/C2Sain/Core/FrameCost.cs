@@ -2,7 +2,8 @@
 //
 // Used by C2Sain/ForkCost.cs, which wraps the fork's heavy calls in timing scopes (the guard planner's
 // slices, Defend Me plans and shifts, the flank spot search, the closest-reachable fallback, follow-spot
-// picks, the two Harmony patches that run inside SAIN every frame, and the carry bots' markers), copies the "Timing:" settings
+// picks, the two Harmony patches that run inside SAIN every frame, the carry bots' markers and, since fork v17, the reach
+// watch's check of each bot), copies the "Timing:" settings
 // into <see cref="FrameCostRecorder.SetEnabled"/> and logs what the recorder reports. Unity-free so the
 // logic harness (.for-claude-to-reference/harnesses/mcs_fork_logic) can drive it with a scripted clock.
 // Reads and writes no files.
@@ -51,15 +52,18 @@ namespace MiyakoCarryService.Client.C2Sain.Core
 
         /// <summary>The carry bots' markers: their per-frame upkeep and the handler that runs before each camera draws (StrobeMarkers).</summary>
         Strobe = 7,
+
+        /// <summary>Fork v17: the reach watch's once-a-second check of a bot (C2Sain/ReachWatch.cs: navmesh queries for a stranded bot and for a path to the player).</summary>
+        ReachWatch = 8,
     }
 
     /// <summary>Names of the <see cref="CostKind"/>s as they appear in the log (read by .for-claude-to-reference/tools/mcs_fork_log_summary.py).</summary>
     public static class CostNames
     {
         /// <summary>Number of kinds.</summary>
-        public const int Count = 8;
+        public const int Count = 9;
 
-        private static readonly string[] _names = { "planner", "defend", "flank-spot", "closest-reachable", "follow-spot", "foliage-sight", "decisions", "strobe-markers" };
+        private static readonly string[] _names = { "planner", "defend", "flank-spot", "closest-reachable", "follow-spot", "foliage-sight", "decisions", "strobe-markers", "reach-watch" };
 
         /// <summary>The log name of a kind.</summary>
         public static string Of(CostKind kind)

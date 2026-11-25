@@ -881,6 +881,9 @@ namespace MiyakoCarryService.Client.Mgrs
                 mcsBotPlayerData.TargetPos = null;
                 mcsBotPlayerData.ProxyTargetId = null;
                 C2Sain.TeamModes.CancelDefend(mcsBotPlayerData.McsAILeadPlayer); // Fork: Regroup also ends Defend Me
+                // Fork v17: Regroup also recalls the bot to the player, from any distance and in a fight (it only set follow intents
+                // before, which a squad in Combat never looked at): C2Sain/C2Gate.BeginRecall, Core/BreakOff.cs.
+                C2Sain.C2Gate.BeginRecall(botOwner, mcsBotPlayerData, C2Sain.Core.RecallKind.Regroup);
             }
             botOwner.TalkMsg(new McsMsg
             {
@@ -903,7 +906,7 @@ namespace MiyakoCarryService.Client.Mgrs
                 mcsBotPlayerData.IsLooting = false;
                 mcsBotPlayerData.TargetPos = null;
                 mcsBotPlayerData.ProxyTargetId = null;
-                mcsBotPlayerData.Fork.BreakOff.Begin(Time.time);
+                C2Sain.C2Gate.BeginRecall(botOwner, mcsBotPlayerData, C2Sain.Core.RecallKind.BreakOff);
             }
             botOwner.TalkMsg(new McsMsg
             {
@@ -1073,23 +1076,13 @@ namespace MiyakoCarryService.Client.Mgrs
                 mcsBotPlayerData.ProxyTargetId = null;
                 // Fork v10: a bot dropped off the navmesh can never move again, so when the player stands
                 // off it, land the bot on the walkable point nearest the player instead (C2Nav, up to 32 m).
-                var destination = mcsBotPlayerData.LeadPlayer.Position;
-                if (!C2Sain.C2Nav.IsOnNavMesh(destination) && C2Sain.C2Nav.TryNearestWalkable(destination, out var walkable))
-                {
-                    if (C2Sain.ForkConfig.DebugLog?.Value == true)
-                    {
-                        McsLogger.LogInfo($"[{C2Sain.ForkLog.Tag}] teleport: you are off the navmesh, so {mcsBotPlayer.Profile?.Nickname} "
-                            + $"lands on the nearest walkable ground, {Vector3.Distance(walkable, destination):0} m from you");
-                    }
-                    destination = walkable;
-                }
+                // Fork v17: that choice, and the line it logs, now live in C2Sain/BotTeleport.cs, shared with every teleport.
+                var destination = C2Sain.BotTeleport.LandingNear(mcsBotPlayerData.LeadPlayer.Position, mcsBotPlayer.Profile?.Nickname);
                 mcsBotPlayer.Teleport(destination, true);
             }
             var playerPosition = mcsBotPlayer.Position;
-            botOwner.Mover._lastGoodCastPoint = botOwner.Mover._prevSuccessLinkedFrom = botOwner.Mover._prevLinkPos = botOwner.Mover.PositionOnWayInner = playerPosition;
-            botOwner.Mover.SetPlayerToNavMesh(playerPosition);
+            C2Sain.BotTeleport.ResetMover(botOwner, playerPosition, Time.time, false); // Fork v17: the mover reset every teleport shares
             botOwner.GoToSomePointData.SetPoint(playerPosition);
-            botOwner.Mover._lastTimePosChanged = Time.time;
             botOwner.TryResetHandsState();
             botOwner.TalkMsg(new McsMsg
             {

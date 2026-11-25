@@ -4,8 +4,9 @@
 // Fork property). Written by C2Gate (C2 layer gate), DecisionPolicy and
 // EngageTactics (SAIN decision prefix), McsGuardLayer, TeamModes (the Defend Me
 // shift timer), the guard logics (walk progress, look scan), the fork's commands
-// (ForkCommands, Break off), EscortToPointByWayLogic and, since v15, the follow code
-// (McsBrainLayer, McsBaseLayer.EndFollowWalk, GoToPointLogic, the teleports); read by ForkDebug for the
+// (ForkCommands, the Break off and Regroup recalls through C2Gate.BeginRecall), EscortToPointByWayLogic and, since v15, the
+// follow code (McsBrainLayer, McsBaseLayer.EndFollowWalk, GoToPointLogic, the teleports) and, since v17, the reach watch
+// (C2Sain/ReachWatch.cs, polled from McsBrainLayer.IsActive) and the trail line (FollowWatch.LogTrail); read by ForkDebug for the
 // overlay, by the diagnostics (OpenGroundWatch, BrainWatch, FrozenViewWatch), by
 // GuardMoveLogic and by BotWeaponSelectorPatch. Holds no Unity objects that outlive a raid. Reads and
 // writes no files.
@@ -22,8 +23,24 @@ namespace MiyakoCarryService.Client.C2Sain
         /// <summary>Time limit on chases (DecisionPolicy).</summary>
         public readonly ChaseLeash Leash = new(() => Random.value);
 
-        /// <summary>Break off from combat (command, C2Gate).</summary>
+        /// <summary>
+        /// The bot's recall (fork v17: Break off, Regroup or the Aggressive leash pull; Core/BreakOff.cs). Begun through
+        /// C2Gate.BeginRecall (the commands, the leash pull), updated and ended by C2Gate, read by McsBrainLayer (the recall
+        /// walk), MovePolicy, DecisionPolicy, ReachWatch and ForkDebug.
+        /// </summary>
         public readonly BreakOff BreakOff = new();
+
+        /// <summary>Fork v17: how long the bot has been beyond the Aggressive leash range; a Leash recall follows (C2Gate; Core/LeashRules.cs).</summary>
+        public readonly LeashPull Pull = new();
+
+        /// <summary>
+        /// Fork v17: the reach watch's timers for this bot: stranded off the walkable ground, no complete path to the player, the
+        /// catch-up cooldown (C2Sain/ReachWatch.cs writes and reads them; Core/ReachWatch.cs).
+        /// </summary>
+        public readonly ReachState Reach = new();
+
+        /// <summary>Fork v17: when this bot's next "trail:" diagnostic line is due (FollowWatch.LogTrail; Core/TrailGate.cs).</summary>
+        public readonly TrailGate TrailLine = new();
 
         /// <summary>The aggressive stances' tactics and their flank legs (EngageTactics, McsGuardLayer).</summary>
         public readonly EngageOrder Engage = new();

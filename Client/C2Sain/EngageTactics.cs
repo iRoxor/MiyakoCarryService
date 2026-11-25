@@ -19,7 +19,10 @@
 //         when SAIN has a suppression point, otherwise holds in cover;
 //       - flanker: walks a flank leg (run by McsGuardLayer) to a point picked by C2Nav.TryPickFlankSpot,
 //         then SAIN searches the last known position from there. SAIN has no flanking of its own
-//         (checked in SAIN 4.5.1).
+//         (checked in SAIN 4.5.1). Since fork v17 the leash bounds the legs (Core/LeashRules.cs): none is planned
+//         during a recall's no-chase grace, while the chase leash is returning the bot, when the bot is past 0.8 of the
+//         leash range from the player or the enemy past the whole range; a leg's end lies within 0.8 of the range;
+//         a running leg ends as Leash past the range and is dropped when a recall begins or its grace runs.
 //   - Hyper-aggressive: GigaChad or Wreckless (the reckless-personality setting), search delay cut to
 //     RECKLESS_SEARCH_DELAY; SAIN does the rest, as the old Engage Enemy Wrecklessly did.
 // The leash per stance is applied by DecisionPolicy, not here.
@@ -60,7 +63,20 @@ namespace MiyakoCarryService.Client.C2Sain
 
         private static readonly EngageSettings _settings = new();
         private static readonly List<BotOwner> _orderedBots = new();
+
+        /// <summary>Fork v17: the leash-near-flank-legs tunables (Core/LeashRules.cs), the defaults; shared with C2Gate's leash pull.</summary>
+        private static readonly LeashRuleSettings _leashRules = new();
+
+        /// <summary>Fork v17: the stance tunables RangeLimit reads, refreshed from the "Aggressive: leash" setting before each use.</summary>
+        private static readonly StanceSettings _rangeStance = new();
+
         private static McsMgr McsMgr => field ??= MgrAccessor.Get<McsMgr>();
+
+        /// <summary>Fork v17: the leash-near-flank-legs tunables (Core/LeashRules.cs), read by C2Gate for the leash pull.</summary>
+        internal static LeashRuleSettings LeashTunables => _leashRules;
+
+        /// <summary>Fork v17: the share of the leash range a Leash recall brings the bot back to (StanceSettings.ReturnShare, 0.5).</summary>
+        internal static float ReturnShare => _rangeStance.ReturnShare;
 
         /// <summary>
         /// The bot's stance now: its own override when it has one (this raid only), otherwise the squad
@@ -69,6 +85,17 @@ namespace MiyakoCarryService.Client.C2Sain
         public static CarryStance CurrentStance(BotForkState fork)
         {
             return StanceRules.Effective(ForkConfig.Stance?.Value ?? CarryStance.Defensive, fork?.StanceOverride);
+        }
+
+        /// <summary>
+        /// Fork v17: the stance's leash range from the player (m): the "Aggressive: leash" setting for Aggressive, float.PositiveInfinity
+        /// for Hyper-aggressive, 0 for Passive and Defensive (the timed leash). The flank rules, the flank leg's leash test and the
+        /// leash pull (C2Gate) read it.
+        /// </summary>
+        public static float RangeLimit(CarryStance stance)
+        {
+            _rangeStance.AggressiveLeash = ForkConfig.AggressiveLeash?.Value ?? _rangeStance.AggressiveLeash;
+            return StanceRules.RangeLimit(stance, _rangeStance);
         }
 
         /// <summary>
@@ -165,10 +192,26 @@ namespace MiyakoCarryService.Client.C2Sain
             var visible = enemy != null && enemy.IsVisible;
             var underFire = SainBridge.IsUnderFire(data, now, UNDER_FIRE_WINDOW);
 
+            // Fork v17: the leash. The tactical kind is the Aggressive stance, whose range is the "Aggressive: leash" setting.
+            var lead = data.LeadPlayer;
+            var botToPlayer = lead != null ? Vector3.Distance(botOwner.Position, lead.Position) : 0f;
+            var rangeLimit = RangeLimit(CurrentStance(fork));
+            var graceRunning = fork.Leash.GraceLeft(now) > 0f;
+
             if (order.FlankActive)
             {
                 var flankPoint = ToVector3(order.FlankPoint);
-                var flankEnd = order.UpdateFlank(now, Vector3.Distance(botOwner.Position, flankPoint), visible, underFire, _settings);
+                FlankEnd flankEnd;
+                if (graceRunning)
+                {
+                    // A recall just ended: no flank leg is continued during its no-chase time (before v17 the grace saw only chases).
+                    order.EndFlank(FlankEnd.Recall);
+                    flankEnd = FlankEnd.Recall;
+                }
+                else
+                {
+                    flankEnd = order.UpdateFlank(now, Vector3.Distance(botOwner.Position, flankPoint), visible, underFire, botToPlayer, rangeLimit, _settings);
+                }
                 if (flankEnd == FlankEnd.None)
                 {
                     solo = ECombatDecision.None;
@@ -216,10 +259,15 @@ namespace MiyakoCarryService.Client.C2Sain
             if (ForkConfig.EngageFlanking.Value && lastKnown.HasValue && !visible && !underFire)
             {
                 var anchor = ToV3(lastKnown.Value);
-                if (order.ShouldPlanFlank(anchor, _settings))
+                var enemyToPlayer = lead != null ? Vector3.Distance(lastKnown.Value, lead.Position) : 0f;
+                // Fork v17: no leg while the grace runs, while the leash is bringing the bot back, or near the edge of the range.
+                if (order.ShouldPlanFlank(anchor, _settings)
+                    && LeashRules.CanPlanFlank(graceRunning, fork.Leash.Returning, botToPlayer, enemyToPlayer, rangeLimit, _leashRules))
                 {
                     var preferredSide = count >= 2 ? (index % 2 == 1 ? -1 : 1) : 0;
-                    if (C2Nav.TryPickFlankSpot(botOwner.Position, lastKnown.Value, preferredSide, out var spot, out var side))
+                    var playerPos = lead != null ? lead.Position : botOwner.Position;
+                    var spotLimit = lead != null ? LeashRules.FlankSpotLimit(rangeLimit, _leashRules) : float.PositiveInfinity;
+                    if (C2Nav.TryPickFlankSpot(botOwner.Position, lastKnown.Value, preferredSide, playerPos, spotLimit, out var spot, out var side))
                     {
                         order.BeginFlank(ToV3(spot), anchor, side, now);
                         solo = ECombatDecision.None;
@@ -242,23 +290,36 @@ namespace MiyakoCarryService.Client.C2Sain
         /// <summary>
         /// Whether the bot is walking a flank leg, which keeps the C2 layer off whatever the squad's mode
         /// (called by C2Gate). Also ends a leg that no SAIN decision is ticking: on arrival, after the
-        /// leg's time limit, or when the bot's stance no longer runs tactics. Logs a leg that ends here.
+        /// leg's time limit, when the bot's stance no longer runs tactics, and, since fork v17, when the
+        /// bot is beyond the stance's leash range from the player or a recall's no-flank grace is running.
+        /// Logs a leg that ends here.
         /// </summary>
-        public static bool OnFlankLeg(BotOwner botOwner, BotForkState fork, float now)
+        /// <param name="botOwner">The carry bot.</param>
+        /// <param name="fork">Its fork state.</param>
+        /// <param name="now">Game time in seconds.</param>
+        /// <param name="distanceToPlayer">Metres from the bot to the player.</param>
+        public static bool OnFlankLeg(BotOwner botOwner, BotForkState fork, float now, float distanceToPlayer)
         {
             var order = fork.Engage;
             if (!order.FlankActive)
             {
                 return false;
             }
-            if (StanceRules.Tactics(CurrentStance(fork)) == EngageKind.None)
+            var stance = CurrentStance(fork);
+            if (StanceRules.Tactics(stance) == EngageKind.None)
             {
                 order.Cancel();
                 fork.EngageRole = "";
                 LogDebug(botOwner, "flank leg dropped: stance changed");
                 return false;
             }
-            var end = order.UpdateFlank(now, Vector3.Distance(botOwner.Position, ToVector3(order.FlankPoint)), false, false, _settings);
+            if (fork.Leash.GraceLeft(now) > 0f)
+            {
+                order.EndFlank(FlankEnd.Recall);
+                LogDebug(botOwner, $"flank leg ended: {FlankEnd.Recall}");
+                return false;
+            }
+            var end = order.UpdateFlank(now, Vector3.Distance(botOwner.Position, ToVector3(order.FlankPoint)), false, false, distanceToPlayer, RangeLimit(stance), _settings);
             if (end != FlankEnd.None)
             {
                 LogDebug(botOwner, $"flank leg ended: {end}");

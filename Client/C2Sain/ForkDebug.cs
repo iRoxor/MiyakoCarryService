@@ -56,7 +56,8 @@ namespace MiyakoCarryService.Client.C2Sain
             }
             if (fork.BreakOff.Active)
             {
-                _builder.Append('\n').Append("breaking off");
+                _builder.Append('\n').Append("recall: ").Append(Core.BreakOff.Label(fork.BreakOff.Kind)).Append(", ")
+                    .Append((now - fork.BreakOff.StartedAt).ToString("0")).Append(" s, best ").Append(fork.BreakOff.BestDistance.ToString("0")).Append(" m");
             }
             if (!fork.C2Active && fork.HasGuardSpot && fork.GuardPostKind.Length > 0 && data.LeadPlayer != null)
             {

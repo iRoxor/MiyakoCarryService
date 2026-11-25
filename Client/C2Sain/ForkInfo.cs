@@ -352,6 +352,14 @@ namespace MiyakoCarryService.Client.C2Sain
         ///    cut were in Defensive, at 43 m or less; none was cut in Aggressive, which logs a cut only past
         ///    its 100 m leash. Three carry bots died (13:39 in one raid; 06:43 and 22:20 in the other). No
         ///    v11 falsifier fired. The same raids' stutter check is what led to v12.
+        ///    Result (2026-11-24, seven raids with v16; evidence/2026-11-24-build-16-customs-factory, build-16-analysis.txt 5a):
+        ///    the leash falsifier ("an Aggressive bot logged chasing beyond 110 m of the player") FIRED. In Customs raid 1
+        ///    ifdian_c0d8c, set to Aggressive at 23:47.6, ran a flank leg from 23 m out toward a point about 90 m beyond its last
+        ///    leg's (24:45.5) and was 105 m from the player when it ended; Break off pulled it back at 108 m and 158 m, each time
+        ///    giving up after about 20 s with the bot still 80-160 m away; a NEW flank leg began at 25:21.4 with the bot 137 m
+        ///    out; "chase cut at 222 m (Aggressive)" at 26:53.9 is the only Aggressive chase cut in any evidence folder; the bot
+        ///    was 239 m away when the raid ended. The range veto did not fail: flank legs, which set the decisions to None, and
+        ///    Break off's fixed 20 s clock went round it. Fork v17 fixes both.
         /// 12 (2026-11-18) Test build 12: the guard planner stops holding a frame, the fork times its own
         ///    work, and carry bots wear markers that show in ECOTI's thermal view and in night vision.
         ///    Measured before it:
@@ -670,7 +678,24 @@ namespace MiyakoCarryService.Client.C2Sain
         ///    - "Timing: follow spot picks" showing a mean of 1 ms or more a call, or a frame of 3 ms or more, with the
         ///      bots trailing (about one pick a second each) sends the re-aim rate down;
         ///    - any exception naming McsBaseLayer.EndFollowWalk, FollowTrail or FollowWatch is a bug to fix before anything else.
-        ///    Measured: nothing yet (no raid has run v15).
+        ///    Measured (2026-11-24, seven raids with v16, which acts as v15 unless the game's velocity reads zero or the code throws;
+        ///    evidence/2026-11-24-build-16-customs-factory, build-16-analysis.txt sections 2 and 3; 46.3 bot-minutes of following,
+        ///    31.4 on Customs and Interchange and 14.9 on Factory):
+        ///    - Following: Default->TooFar 2.6 per 10 minutes of following (morning 2.2, Factory 3.4; v13 33.6; builds 7-11 7.5-81).
+        ///      The one raid with 5 minutes or more of following per bot (Customs raid 2, 7.4 and 8.2 minutes) had 2.7 and 2.4.
+        ///      TooClose 6.3 per 10 minutes (v13 10.2) and Partoling 7.6 (v13 31.6).
+        ///    - Far behind and teleports: no stand in Mcs:TooFar far behind (v13 had 12, 30-146 m out); of 36 TooFar stretches of 25 s
+        ///      or more, 26 ended 1-5 m from the player and 10 when the Guard layer or SAIN's Combat layer took over. 0 of MCS's own
+        ///      30 s teleports (v13 had one).
+        ///    - Stalls: 10, of 3-5 s each; 7 ended with the bot moving again and 3 when another layer took over (SAIN's Combat layer
+        ///      twice, the Guard layer once); 14 re-paths, 0 give-ups, 0 teleports.
+        ///    - Falsifiers: none fired, except "a stand of 5 s or more in TooFar with no follow-stall line", by its wording only: 5
+        ///      bots with no guard post stood 1-4 m beside a shuffling player, and 1 stand began in SAIN's layer. No exception named
+        ///      EndFollowWalk, FollowTrail or FollowWatch. The follow-spot timing was not measured ("Timing: follow spot picks" was off).
+        ///    - The user (2026-11-24): no bot ran ahead of them, bumped into them, circled them or failed to settle when they stopped.
+        ///    - Still wrong, and what v17 does about it: an Aggressive bot left 239 m behind (the v11 falsifier); a bot stranded off
+        ///      the navmesh for 3 minutes; places on Factory the bots cannot reach; one bot that lost ground while trailing with no
+        ///      line to say why.
         /// 16 (2026-11-18) Test build 16: build 15 with two safeguards and a startup line that names its commit. The user had already
         ///    copied build 15 (commit 6d8e7b40, DLL SHA-256 27e97d0c...) into the game when they were made, so the revision is a new
         ///    version: the two builds can act differently, and a log that says v15 must mean 6d8e7b40 alone. (A Reserve raid began on
@@ -696,12 +721,128 @@ namespace MiyakoCarryService.Client.C2Sain
         ///    - a stall line whose speed "as the bot counted it" reads 0.0 m/s while you were walking would mean even the position
         ///      measure failed (check Core/FollowTrail.ObservePlayer); one whose "by the game's velocity" reads 0.0 while the counted
         ///      speed does not shows the game's velocity cannot be trusted and the position measure was needed.
-        ///    Measured: nothing yet (no raid has run v16).
+        ///    Measured (2026-11-24, the seven raids above; build-16-analysis.txt section 3): no "... failed:" line, so the fall-back to
+        ///    MCS's rules never ran. In the 9 stall lines with the player moving (1.1-5.3 m/s) the game's velocity and the position
+        ///    measure agreed within 0.2 m/s, and with the player still they read 0.0 and 0.2: the game's velocity reads correctly and
+        ///    the position measure was not needed in these raids. v15's falsifiers: see the Measured line of v15.
+        /// 17 (2026-11-25) Test build 17: recalls that bring every bot back, an Aggressive leash that holds, and bots that cannot stay
+        ///    stranded. Built on build 16 (commit 9ef8ba9c) from miyako-carry-service/PLAN-BUILD-17.md (the bot behavior session's plan,
+        ///    approved by the user on 2026-11-24). The markers, the guard planner, the follow trail's rules and Defend Me are untouched.
+        ///    Measured before it (evidence/2026-11-24-build-16-customs-factory/build-16-analysis.txt, seven raids with v16; the user's
+        ///    report: "bots running off and/or staying in fights/re-engaging in fights despite the Regroup and Break Off commands"):
+        ///    - Customs raid 1: ifdian_c0d8c (Aggressive from 23:47.6) ran a flank leg ending about 90 m beyond its last one, was 105 m out
+        ///      when it ended, was recalled at 108 m (25:01.2) and 158 m (25:26.6), each recall ending after about 20 s with the bot 80-160
+        ///      m away, began a NEW leg at 25:21.4 with the bot 137 m out, logged "chase cut at 222 m (Aggressive)" at 26:53.9 and finished
+        ///      the raid 239 m from the player (v11's leash falsifier).
+        ///    - Factory night raid 3: 梦旋 logged "reach: ... stays put ... no path from the bot" at 05:35.4 and stayed crouched in SAIN's
+        ///      cover for 3 minutes, until the user's Force Teleport at 08:49.8; A64 logged the same in Factory raid 2 (01:38.4).
+        ///    - Factory: 12 "no path to you" walks (Customs 5) with the player never off the navmesh for 3 s; at 15:10.9-15:24.9 three bots
+        ///      fell from 10-14 m to 38-41 m behind, their guard posts unreachable, and the user teleported all four. The seven raids held
+        ///      8 Force Teleport commands moving 17 bots, 3 for navmesh problems and 1 for the trail.
+        ///    - Customs raid 2 (16:38-16:55): one bot fell from 16 m to 40 m behind in 17.6 s while sprinting, its squadmate closed from
+        ///      11 m to 2 m, and no line fell between those moments.
+        ///    The causes, read from the code at 9ef8ba9c: Break off ended 20 s after it began whatever the distance (Core/BreakOff.Update);
+        ///    Regroup only set follow intents, which C2Gate never looked at while the squad was in Combat; the Break off grace vetoed chase
+        ///    decisions only, and a flank leg sets the decisions to None, so neither the grace nor the range leash saw it; flank points had
+        ///    no limit relative to the player; the range leash vetoed chases and nothing else; a recall that timed out cleared the leash's
+        ///    return state (StartGrace), as did every decision made while the C2 layer held the bot (a dummy distance of 0); nothing looked
+        ///    at a carry bot's own place on the navmesh; MCS's 30 s teleport landed at the player's feet even with the player off the navmesh.
+        ///    Changed (logic in Core/BreakOff.cs, LeashRules.cs, ReachWatch.cs, TrailGate.cs; the harness drives all of it):
+        ///    A. Recalls. Regroup also begins a recall, as Break off does; both run in a fight and from any distance (C2Gate.BeginRecall).
+        ///    - A recall ends when the bot ARRIVES (within the larger of "Break off: arrival radius", 3 by default, and 5 m: the recall
+        ///      walk's spot lies up to 4 m from the player, which a 3 m test could not reliably meet) or has NOT GOT 2 m CLOSER to the player
+        ///      for "Break off: give up when stuck for" seconds (default 20; before, seconds since the start). It never ends on a fixed
+        ///      clock, so a bot 150 m out that keeps coming is never cut off. Another command that gives the bot a task (any intent in
+        ///      C2Gate.C2TaskIntents: Go To Point, Hold Position, an escort, a loot or proxy task, Clear Area, a Force Teleport...) cancels
+        ///      it; build 16's Cancel had no caller.
+        ///    - The grace after a Break off or Regroup recall, arrived or given up, is 30 s (was 10; ForkConfig.MigrateDefaults, settings
+        ///      version 15, moves a file that still holds 10). It vetoes chases in every stance as before and now also blocks flank
+        ///      legs; when it starts SAIN's search is stopped once (SainBridge.StopSearch); shooting an enemy in view from where the bot
+        ///      stands stays allowed. Only an ARRIVAL clears the leash's return state (StartGrace no longer does), and while a recall holds
+        ///      the bot under C2 the leash's chase timer is forgotten but the return state kept (ChaseLeash.EndChase; DecisionPolicy).
+        ///    B. The Aggressive leash holds ("Stance: Aggressive leash", 100 m; Hyper-aggressive keeps none, Break off and Regroup still work).
+        ///    - No flank leg is planned during the grace, while the leash is returning the bot, when the bot is past 0.8 of the range from
+        ///      the player, or when the enemy's last known position is past the whole range (LeashRules.CanPlanFlank). A flank point lies
+        ///      within 0.8 of the range of the player (C2Nav.TryPickFlankSpot, LeashRules.FlankSpotAllowed). A running leg ends as
+        ///      FlankEnd.Leash once the bot is past the range, and as FlankEnd.Recall when a recall begins or its grace runs.
+        ///    - An Aggressive bot that stays beyond the range for 2 s begins a recall of kind Leash in any layer (C2Gate, after the recall
+        ///      block and before the flank-leg check; not for a bot on a command of its own). It arrives at half the range (50 m) and no
+        ///      grace follows it; chases stay vetoed until the bot is within 50 m through the return state, as before.
+        ///    C. Stranded bots (C2Sain/ReachWatch.cs, polled from McsBrainLayer.IsActive: once a second per bot, never two bots in one
+        ///      frame). A bot with no walkable point within 3 m of it, or no path from it to that point (the "no path from the bot"
+        ///      test), for 4 s in a row is moved to that point with the shared teleport routine, in any squad mode; with none near it
+        ///      is teleported to the player when the squad is not in a fight, and retried every 4 s in a fight. New setting
+        ///      "Follow: put stranded bots back on the ground" (ReachSnap, default on). Not judged: a bot on a stationary weapon, being
+        ///      healed, dead, or in the BTR (or with the player in it).
+        ///    D. Bots that cannot reach the player. A bot 15 m or more away checks, once a second, for a complete path to the walkable point
+        ///      nearest the player (bots within 15 m cost nothing). With none for "Follow: teleport near you after" seconds (FollowCatchUp,
+        ///      default 10, 0 = off), the squad not in a fight (or the bot on a Break off or Regroup recall), no command of its own, a landing
+        ///      point at least 10 m closer to the player than the bot, and 30 s since its last catch-up, the bot is teleported there. One
+        ///      teleport routine (C2Sain/BotTeleport.cs) now serves MCS's four 30 s teleports, Force Teleport, C and D: MCS's 30 s
+        ///      teleport lands on the nearest walkable point when the player stands off the navmesh, as Force Teleport has since v10. The
+        ///      reach lines gain the positions of the bot, the player and the spot.
+        ///    E. A "trail:" line (FollowWatch.LogTrail, TrailGate) while a bot walks to the player 12 m or more behind.
+        ///    Deviations from the plan, found while building it (the bot behavior session should look at them):
+        ///    - The plan's cause 7 (a timed-out recall clears the return state) had a second path it did not name: DecisionPolicy called
+        ///      ShouldVeto with a distance of 0 on every decision while C2 held the bot, which clears the return state. Fixing only
+        ///      StartGrace would not have kept it through a recall, so the C2 branch calls ChaseLeash.EndChase while a recall runs.
+        ///    - Cancel: the plan said to keep the existing Cancel callers; there were none, so the gate cancels a recall when the bot gains a
+        ///      task intent (C2TaskIntents), which covers every command that sends the bot elsewhere.
+        ///    - The leash pull and the catch-up leave a bot on a command of its own alone (the same intent list); the plan listed that for
+        ///      the catch-up only.
+        ///    - The reach watch's snap and catch-up use Force Teleport's mover reset, not MCS's 30 s teleport's extra steps (a recalculated
+        ///      way and a paused mover): Force Teleport is what freed the stranded bot in the raid. ReachWatch also skips a bot whose player
+        ///      is in the BTR.
+        ///    Diagnostics (diagnostic log; tools/mcs_follow_stats.py and mcs_fork_log_summary.py read them):
+        ///    - "recall: <bot> started (Break off|Regroup|leash), N m from you", "... ended after S s: arrived N m from you; no chasing or
+        ///      flanking for G s", "... ended after S s: gave up N m from you, T s without getting closer (best B m); no chasing or
+        ///      flanking for G s" (a Leash recall's end line has no grace clause) and "... cancelled after S s by <what>".
+        ///    - "flank leg ended: Leash" and "flank leg ended: Recall" join the existing reasons.
+        ///    - "reach: <bot> was off the walkable ground for N s at (x, y, z); moved M m back onto it" (or "; teleported to you, K m away")
+        ///      and "teleport: catch-up: <bot> could not reach you for N s, M m away; landed K m from you".
+        ///    - The two "reach:" lines of v10 end with " [bot (x, y, z), you (x, y, z), spot (x, y, z)]" (spot "none" when the bot had no
+        ///      path at all); the tools accept lines with and without it.
+        ///    - "trail: <bot> is N m behind you (<reason>); it moved v m/s and you w m/s over the last S s; its spot: ...; path to the
+        ///      spot: ...; mover: sprinting ..., sprint refused ..., state ...; speed rule: ..." every 2 s per bot while it walks to you
+        ///      12 m or more behind (a follow walk or a recall walk).
+        ///    - A new "Timing: reach watch" switch (CostReachWatch, default off) times the once-a-second check.
+        ///    Records: no field repurposed or removed. The setting BreakOffTimeout keeps its key and default (20) but now means seconds
+        ///    without getting closer, and BreakOffGrace's default moves from 10 to 30 (not a record: the settings text says so).
+        ///    Pooling:
+        ///    - POOLS with v15 and v16: the follow-state counts of an ordinary follow walk (Default->TooFar, TooClose, Partoling, stalls:
+        ///      the follow rules are unchanged); guard plans, hearing, the markers and the planner's timing pool UNRESTRICTED.
+        ///    - Does NOT pool with earlier builds: combat distances and chase cuts in raids with any Aggressive time (flank legs and
+        ///      the leash changed); teleport counts (a new kind, the catch-up, and MCS's 30 s teleport lands on walkable ground);
+        ///      recall outcomes (new lines; earlier builds have none).
+        ///    Falsifiers (written before any v17 raid):
+        ///    Recalls
+        ///    - a recall that ends "gave up" while its "trail:" lines show the bot closing on the player means the progress rule is wrong;
+        ///    - a "recall: ... started" line with no end line within 90 s means a recall can run forever (a raid's end or the bot's death
+        ///      excepted);
+        ///    - a chase decision or a flank leg from a bot whose grace is running means the grace misses a path (look for "flanking" lines,
+        ///      or a brain change into a chase).
+        ///    The leash
+        ///    - an Aggressive bot more than 110 m from the player for more than 10 s in a row means the leash still leaks (check its
+        ///      brain, flank and trail lines);
+        ///    - a flank leg's point more than 0.8 x the range + 10 m from the player.
+        ///    Stranded bots and catch-ups
+        ///    - the same bot moved back onto the walkable ground twice within 30 s means the snap target is no better than where it was;
+        ///    - more than 3 catch-up teleports per bot in one Customs raid, or the user seeing a bot teleported while it was walking up to
+        ///      them, means the catch-up is too eager.
+        ///    The user
+        ///    - Break off or Regroup still ignored, in their words.
+        ///    Still standing from v15
+        ///    - Default->TooFar above 10 per 10 minutes of following in a walking raid.
+        ///    Cost
+        ///    - "Timing: reach watch" at a mean of 1 ms or more a call, or 3 ms or more in a frame, means it checks too often.
+        ///    Gates that cannot see the game (what the harness does not reach): the navmesh queries, the teleport's mover calls, SAIN's search
+        ///    stop and the brain layer hook run only in the game; TEST-BUILD-17.md lists what to watch for.
+        ///    Measured: nothing yet (no raid has run v17).
         /// </summary>
-        public const int ForkVersion = 16;
+        public const int ForkVersion = 17;
 
         /// <summary>Short label used in logs and the overlay.</summary>
-        public const string Label = "C2/SAIN fork v16";
+        public const string Label = "C2/SAIN fork v17";
 
         /// <summary>
         /// The assembly's version stamp, "1.1.4.100+&lt;first 8 characters of the commit it was built from&gt;", written into the

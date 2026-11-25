@@ -20,6 +20,10 @@
 //        can tell the two kinds apart (the user's own Force Teleports and MCS's 30 s one in the v13 raid).
 // The format is read by .for-claude-to-reference/tools/mcs_follow_stats.py and mcs_fork_log_summary.py.
 //
+// Since fork v17 (LogTrail), with the same setting on, one line every 2 s per bot while it walks to you 12 m or more behind:
+//   trail: <bot> is <D> m behind you (<Mcs:TooFar|C2Sain:BreakOff>); it moved <v> m/s and you <w> m/s over the last <S> s; its spot:
+//        <a> m from it and <b> m from you; path to the spot: ...; mover: sprinting ..., sprint refused ..., state ...; speed rule: ...
+//
 // Since fork v16 it also writes, with "Debug: diagnostic log" on or off, one error line per fault in the follow code
 // ("... failed: ..."; Fault, at most one every 30 s), after which the bot carries on under MCS's own rules for that walk
 // or frame, and the stall line prints the player's speed twice (by the game's velocity, and as the bot counted it).
@@ -49,6 +53,9 @@ namespace MiyakoCarryService.Client.C2Sain
         /// </summary>
         public static readonly FollowSettings Settings = new();
 
+        /// <summary>Fork v17: the trail line's tunables (Core/TrailGate.cs), the defaults; read by <see cref="LogTrail"/>.</summary>
+        private static readonly TrailSettings _trailSettings = new();
+
         private static float _nextErrorLog;
 
         /// <summary>True unless the setting "Follow: trail while you move" (McsFork/FollowTrail) is off: then the follow keeps v14's rules.</summary>
@@ -56,6 +63,10 @@ namespace MiyakoCarryService.Client.C2Sain
 
         /// <summary>The follow-distance setting (m), 8 until the settings are bound.</summary>
         public static float FollowDistance => ForkConfig.FollowDistance?.Value ?? 8f;
+
+        /// <summary>A position as the logs write it: "(12.3, 4.5, -6.7)", one decimal. The reach lines and the reach watch's lines use it.</summary>
+        /// <param name="position">The position.</param>
+        public static string Place(Vector3 position) => $"({position.x:0.0}, {position.y:0.0}, {position.z:0.0})";
 
         /// <summary>A UnityEngine.Vector3 as the core's V3.</summary>
         /// <param name="v">The position.</param>
@@ -192,7 +203,66 @@ namespace MiyakoCarryService.Client.C2Sain
             }
         }
 
+        /// <summary>
+        /// Fork v17: writes the bot's "trail:" line when one is due (Core/TrailGate.cs: every 2 s while it walks to the player on a follow
+        /// walk or a recall walk and is 12 m or more behind), with "Debug: diagnostic log" on. Called once a frame from
+        /// McsBaseLayer.EndGoToPoint, so it ends at once for any other walk. The line says how far behind the bot is, its own speed and
+        /// the player's over the last 2 s, where its spot is, the navmesh path to the spot, what its mover is doing and the speed rule;
+        /// the next time a trailing bot loses ground (Customs raid 2 of 2026-11-24 lost 24 m in 17.6 s with nothing in the log) the
+        /// line shows which of these changed. Never throws.
+        /// </summary>
+        /// <param name="data">The carry bot's MCS data.</param>
+        /// <param name="bot">The bot.</param>
+        /// <param name="reason">The running action's reason; only "Mcs:TooFar" (a follow walk) and "C2Sain:BreakOff" (a recall walk) write a line.</param>
+        /// <param name="target">The bot's walk target, if any.</param>
+        public static void LogTrail(McsBotPlayerData data, BotOwner bot, string reason, Vector3? target)
+        {
+            try
+            {
+                if (ForkConfig.DebugLog?.Value != true || data == null)
+                {
+                    return;
+                }
+                var fork = data.Fork;
+                var lead = data.LeadPlayer;
+                if (lead == null || (reason != "Mcs:TooFar" && reason != "C2Sain:BreakOff"))
+                {
+                    fork.TrailLine.Reset();
+                    return;
+                }
+                var botPosition = bot.Position;
+                var leadPosition = lead.Position;
+                var distance = Vector3.Distance(botPosition, leadPosition);
+                if (!fork.TrailLine.Due(Time.time, true, distance, ToV3(botPosition), ToV3(leadPosition), _trailSettings, out var seconds, out var botSpeed, out var leadSpeed))
+                {
+                    return;
+                }
+                var toSpot = target.HasValue ? $"{Vector3.Distance(botPosition, target.Value):0} m from it and {Vector3.Distance(target.Value, leadPosition):0} m from you" : "none";
+                McsLogger.LogInfo($"[{ForkLog.Tag}] trail: {Name(data)} is {distance:0} m behind you ({reason}); it moved {botSpeed:0.0} m/s and you {leadSpeed:0.0} m/s "
+                    + $"over the last {seconds:0.0} s; its spot: {toSpot}; path to the spot: {DescribePath(bot, target)}; mover: {DescribeMoverShort(bot)}; "
+                    + $"speed rule: {DescribePace(data)}");
+            }
+            catch (Exception e)
+            {
+                LogFault("trail", e);
+            }
+        }
+
         private static string Name(McsBotPlayerData data) => data.Player?.Profile?.Nickname ?? "a carry bot";
+
+        /// <summary>The mover's sprint, refused-sprint and state for the trail line: "sprinting yes, sprint refused no, state Run".</summary>
+        private static string DescribeMoverShort(BotOwner bot)
+        {
+            try
+            {
+                var m = bot.Mover;
+                return $"sprinting {YesNo(m.Sprinting)}, sprint refused {YesNo(m.NoSprint)}, state {m.CurrentState}";
+            }
+            catch (Exception e)
+            {
+                return $"unreadable ({e.GetType().Name})";
+            }
+        }
 
         /// <summary>"146 m from you; 9.0 m from its spot, which is 2 m from you, not arrived" (or no spot).</summary>
         private static string DescribeWhere(McsBotPlayerData data, BotOwner bot, Vector3? target, bool arrived)

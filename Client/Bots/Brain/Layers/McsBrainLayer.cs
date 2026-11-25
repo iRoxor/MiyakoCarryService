@@ -954,6 +954,13 @@ namespace MiyakoCarryService.Client.Bots.Brain.Layers
 
             var mcsBotPlayerData = BotOwner.GetMcsBotPlayerData();
 
+            // Fork v17: the reach watch looks at this bot once a second (a bot off the walkable ground, a bot that cannot get to you), and
+            // it does so here because this layer is asked on every brain tick whatever layer ends up driving the bot (C2Sain/ReachWatch.cs).
+            if (mcsBotPlayerData != null)
+            {
+                C2Sain.ReachWatch.Poll(BotOwner, mcsBotPlayerData);
+            }
+
             // Fork: decide whether C2 runs or steps aside for SAIN and the Guard layer (C2Sain/C2Gate.cs).
             var wantsC2 = (mcsBotPlayerData != null && mcsBotPlayerData.HasIntent(Intents.ShouldUseStationaryWeapon))
                 || C2Sain.C2Gate.WantsC2(BotOwner, mcsBotPlayerData);

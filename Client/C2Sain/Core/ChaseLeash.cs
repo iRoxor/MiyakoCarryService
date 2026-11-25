@@ -10,7 +10,7 @@
 //   - If another enemy becomes known during a chase, the chase ends at once.
 //   - Once a chase is cut, chases stay vetoed until the bot is back within
 //     ReturnRadius of the player.
-//   - A grace period (after Break off reaches the player) vetoes chases too.
+//   - A grace period (after a Break off or Regroup recall ends, arrived or not) vetoes chases too.
 // Since fork v11 the leash depends on the bot's stance (Core/Stance.cs, StanceRules.ApplyLeash):
 //   - Passive and Defensive keep the timed rules above (RangeLimit 0).
 //   - Aggressive (RangeLimit > 0): chasing is free within RangeLimit metres of the player; past it the
@@ -85,8 +85,9 @@ namespace MiyakoCarryService.Client.C2Sain.Core
         }
 
         /// <summary>
-        /// Starts a no-chase grace period and forgets any chase in progress.
-        /// Called when Break off from combat brings the bot back to the player.
+        /// Starts a no-chase grace period and forgets any chase in progress. Called when a Break off or Regroup recall ends
+        /// (RecallRules.OnEnd). Since fork v17 it leaves <see cref="Returning"/> alone: fork v16 cleared it here, so a recall that
+        /// gave up 100 m out let the bot chase again as soon as the grace was over. Only an arrival clears it (ClearReturning).
         /// </summary>
         /// <param name="now">Game time in seconds.</param>
         /// <param name="seconds">Length of the grace period.</param>
@@ -94,7 +95,25 @@ namespace MiyakoCarryService.Client.C2Sain.Core
         {
             _graceUntil = now + seconds;
             _chaseStart = -1f;
+        }
+
+        /// <summary>
+        /// Clears the return state: the bot is back with the player, so a chase cut earlier no longer bars new ones. Since fork v17
+        /// only an arrived recall calls this (RecallRules.OnEnd).
+        /// </summary>
+        public void ClearReturning()
+        {
             Returning = false;
+        }
+
+        /// <summary>
+        /// Forgets the chase being timed and nothing else: the return state and the grace stay as they are. DecisionPolicy calls it
+        /// while a recall holds the bot under the C2 layer, where fork v16 called ShouldVeto with a distance of 0 and so cleared
+        /// <see cref="Returning"/> on every decision, before the recall could end.
+        /// </summary>
+        public void EndChase()
+        {
+            _chaseStart = -1f;
         }
 
         /// <summary>Forgets all state: chase, return and grace.</summary>

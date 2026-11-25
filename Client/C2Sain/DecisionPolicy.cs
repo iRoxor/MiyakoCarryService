@@ -11,7 +11,8 @@
 //   0. The bot's SAIN side is kept in line with its stance (EngageTactics.EnsureStance):
 //      personality, search delay, aggressive tactics on or off.
 //   1. While the C2 layer is active SAIN's decisions are not executed; the leash
-//      is reset so time spent under C2 does not count as chasing.
+//      is reset so time spent under C2 does not count as chasing (while a recall
+//      runs, since fork v17, only the chase timer is reset: the return state stays).
 //   2. Passive, until the squad is released (TeamModes.IsPassiveReleased: a bot or the player
 //      shot at, or the player firing at an enemy): every combat and squad decision becomes None,
 //      so the bot holds fire and lets enemies pass.
@@ -80,7 +81,16 @@ namespace MiyakoCarryService.Client.C2Sain
 
             if (fork.C2Active)
             {
-                fork.Leash.ShouldVeto(now, false, 0, 0f, leashSettings);
+                if (fork.BreakOff.Active)
+                {
+                    // Fork v17: a recall holds the bot. Forget the chase timer but keep the return state: the call below, with its
+                    // dummy distance of 0, cleared it on every decision, so a recall that then gave up left nothing to bar chases.
+                    fork.Leash.EndChase();
+                }
+                else
+                {
+                    fork.Leash.ShouldVeto(now, false, 0, 0f, leashSettings);
+                }
                 fork.FinalDecision = fork.RawDecision;
                 fork.VetoReason = "C2 in charge";
                 return;

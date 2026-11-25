@@ -164,5 +164,11 @@ namespace MiyakoCarryService.Client.C2Sain
         public bool HasStance;
         public CarryStance Stance;
         public EPersonality StancePersonality;
+
+        /// <summary>
+        /// Fork v18: this bot's limiter for the new Passive's "held fire at" and "engaged hostile" log lines (Core/HoldFire.cs).
+        /// Written by DecisionPolicy.ApplyPassive only; ends with the bot.
+        /// </summary>
+        public readonly HoldFireLog PassiveLog = new();
     }
 }

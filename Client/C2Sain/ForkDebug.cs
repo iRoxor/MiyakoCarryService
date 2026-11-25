@@ -4,7 +4,7 @@
 // while the setting Mcs/DrawDebugInfo is on. Shows the squad mode and zone,
 // whether the C2 layer is in charge and why, SAIN's decisions before and after
 // the fork's policy, the bot's stance (fork v11: whose stance it is, and whether a
-// Passive squad is holding fire), its SAIN personality, the aggressive tactics (role,
+// Reactive squad is holding fire; fork v18: the new Passive's range), its SAIN personality, the aggressive tactics (role,
 // flank leg) and the chase leash / Break off state. Reads and writes no files.
 
 using System.Text;
@@ -67,9 +67,13 @@ namespace MiyakoCarryService.Client.C2Sain
             }
             var stance = EngageTactics.CurrentStance(fork);
             _builder.Append('\n').Append("stance: ").Append(stance.ToString()).Append(fork.StanceOverride.HasValue ? " (this bot)" : " (squad)");
-            if (stance == Core.CarryStance.Passive && data.McsAILeadPlayer != null)
+            if (Core.StanceRules.HoldsFireUntilReleased(stance) && data.McsAILeadPlayer != null)
             {
-                _builder.Append(TeamModes.IsPassiveReleased(data.McsAILeadPlayer) ? ", released" : ", holding fire");
+                _builder.Append(TeamModes.IsReactiveReleased(data.McsAILeadPlayer) ? ", released" : ", holding fire");
+            }
+            else if (Core.StanceRules.HoldsFireByRange(stance))
+            {
+                _builder.Append(", fires only at attackers within ").Append(HoldFireGate.Range.ToString("0")).Append(" m");
             }
             var personality = SainBridge.GetPersonality(SainBridge.GetSain(data.BotOwner));
             if (personality != null)

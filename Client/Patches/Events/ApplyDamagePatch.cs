@@ -76,6 +76,11 @@ namespace MiyakoCarryService.Client.Patches.Events
                     mcsBotPlayerData.LastHitTime = Time.time;
                     mcsBotPlayerData.LastHitShooter = Tools.IsForbiddenEnemy(attackerPlayer) ? null : attackerPlayer;
                     mcsBotPlayerData.AddSuppression(damage);
+                    if (mcsBotPlayerData.LastHitShooter != null)
+                    {
+                        // Fork v18: whoever hits a carry bot has attacked the squad first (the new Passive stance may fire back at it).
+                        C2Sain.TeamModes.MarkHostile(mcsBotPlayerData.McsAILeadPlayer, attackerPlayer.ProfileId, attackerPlayer.Profile?.Nickname, C2Sain.Core.HostileCause.HitBot);
+                    }
                 }
             }
 

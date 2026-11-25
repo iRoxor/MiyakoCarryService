@@ -1,7 +1,7 @@
 // ForkCommands.cs -- handlers for the commands the fork adds, and the hooks it puts on MCS's others.
 //
 // CommandMgr.Start registers DefendMe, SpotEnemy (ContactReports.Report) and, since fork v11, the
-// eight stance commands with CommandUtils. The Team stance commands write the squad stance to the
+// stance commands with CommandUtils (eight; ten since fork v18 added Reactive beside Passive). The Team stance commands write the squad stance to the
 // "Stance" setting (BepInEx saves it, so it carries over to the next raid) and clear every bot's own
 // stance; a bot's own stance command sets BotForkState.StanceOverride for this raid only (carry bots
 // expire and are rebuilt, so nothing is saved against one). A stance survives every other order.
@@ -35,8 +35,11 @@ namespace MiyakoCarryService.Client.C2Sain
             (EPhraseTrigger.NoisePhrase, 146f),
         };
 
-        /// <summary>Team Stance ▸ Passive: the whole squad holds fire until shot at (Core/Stance.cs).</summary>
+        /// <summary>Team Stance ▸ Passive (fork v18): the whole squad never fires past the Passive range, and within it only at an enemy that attacked first (Core/HoldFire.cs).</summary>
         public static void TeamStancePassive(McsCommandContext ctx) => SetStance(ctx, CarryStance.Passive, true);
+
+        /// <summary>Team Stance ▸ Reactive: the whole squad holds fire until shot at (Core/Stance.cs; this was Passive before fork v18).</summary>
+        public static void TeamStanceReactive(McsCommandContext ctx) => SetStance(ctx, CarryStance.Reactive, true);
 
         /// <summary>Team Stance ▸ Defensive: the whole squad stays close and prefers cover.</summary>
         public static void TeamStanceDefensive(McsCommandContext ctx) => SetStance(ctx, CarryStance.Defensive, true);
@@ -47,8 +50,11 @@ namespace MiyakoCarryService.Client.C2Sain
         /// <summary>Team Stance ▸ Hyper-aggressive: the whole squad charges.</summary>
         public static void TeamStanceHyperAggressive(McsCommandContext ctx) => SetStance(ctx, CarryStance.HyperAggressive, true);
 
-        /// <summary>Stance ▸ Passive, for one bot this raid.</summary>
+        /// <summary>Stance ▸ Passive (fork v18), for one bot this raid.</summary>
         public static void StancePassive(McsCommandContext ctx) => SetStance(ctx, CarryStance.Passive, false);
+
+        /// <summary>Stance ▸ Reactive, for one bot this raid (this was Passive before fork v18).</summary>
+        public static void StanceReactive(McsCommandContext ctx) => SetStance(ctx, CarryStance.Reactive, false);
 
         /// <summary>Stance ▸ Defensive, for one bot this raid.</summary>
         public static void StanceDefensive(McsCommandContext ctx) => SetStance(ctx, CarryStance.Defensive, false);
@@ -117,6 +123,11 @@ namespace MiyakoCarryService.Client.C2Sain
             if (ForkConfig.DebugLog?.Value == true)
             {
                 McsLogger.LogInfo($"[{ForkLog.Tag}] stance order: {botOwner.Profile?.Nickname} -> {stance}{(team ? " (squad, saved)" : " (this bot, this raid)")}");
+            }
+            if (stance == CarryStance.Passive)
+            {
+                // Fork v18: the reply names the range the user has set ("Copy, holding fire past 15 metres, only firing back up close.").
+                ForkText.Override("McsFork/StancePassiveAck", $"Copy, holding fire past {HoldFireGate.Range.ToString("0", System.Globalization.CultureInfo.InvariantCulture)} metres, only firing back up close.");
             }
             botOwner.TalkMsg(new McsMsg { PhraseTrigger = EPhraseTrigger.Roger, Keys = [$"McsFork/Stance{stance}Ack"] });
         }

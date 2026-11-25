@@ -27,10 +27,14 @@
 // a squad Defend plan (GuardPlanner.PlanDefend), remade when the player has moved
 // DEFEND_REPLAN_MOVE m, a report arrives or expires, or a bot dies, plus each bot's
 // own shifts to new spots (Core/DefendShuffle.cs, GuardPlanner.ShiftDefend).
-// Since fork v11 each squad also has a Passive hold-fire gate (Core/Stance.cs, PassiveGate), ticked
-// with the machine and read by DecisionPolicy through IsPassiveReleased: a Passive squad holds fire
-// until a carry bot or the player is shot at, or the player fires at an enemy (when the "Passive:
-// fight when you shoot" setting is on), and is released until the squad leaves combat.
+// Since fork v11 each squad also has a hold-fire gate (Core/Stance.cs, ReactiveGate; called PassiveGate before fork
+// v18), ticked with the machine and read by DecisionPolicy through IsReactiveReleased: a Reactive squad holds fire
+// until a carry bot or the player is shot at, or the player fires at an enemy (when the "Reactive: fight when you
+// shoot" setting is on), and is released until the squad leaves combat.
+// Since fork v18 each squad also has a set of hostile enemies (Core/HoldFire.cs, HostileSet): the enemies that hit a
+// carry bot or the player, or whose bullets landed near either. ApplyDamagePatch, McsAILeadPlayer.MarkLeadAttacker and
+// PlayHitEffectPatch call MarkHostile in every stance; the new Passive stance fires only at those enemies, and only within
+// its range (IsHostile, asked by DecisionPolicy, SainShootGatePatch and HoldFireGate). Clear() forgets the sets at raid end.
 // Reads and writes no files; with "Debug: diagnostic log" on it writes mode
 // changes, every guard and Defend plan (each bot's post, its cover and the bot's
 // path to it, from GuardPlanner.DescribePost, then one line with the plan's timing: the
@@ -80,10 +84,10 @@ namespace MiyakoCarryService.Client.C2Sain
 
         /// <summary>
         /// Fork v11: seconds a hit or near miss on a bot, a hit on the player, or the player firing at an
-        /// enemy counts as "just now" for the Passive gate. Longer than the 0.2 s tick so no event falls
+        /// enemy counts as "just now" for the Reactive gate. Longer than the 0.2 s tick so no event falls
         /// between two ticks.
         /// </summary>
-        private const float PASSIVE_EVENT_WINDOW = 1.5f;
+        private const float REACTIVE_EVENT_WINDOW = 1.5f;
 
         /// <summary>
         /// Metres the player may move inside a Defend Me zone before the squad's Defend spots are
@@ -119,7 +123,10 @@ namespace MiyakoCarryService.Client.C2Sain
             public float SightingTime = -999f;
             public GuardPlanState Plan;
             public GuardPlanState DefendPlan;
-            public readonly PassiveGate Passive = new();
+            public readonly ReactiveGate Reactive = new();
+
+            /// <summary>Fork v18: the enemies that attacked this squad first (Core/HoldFire.cs); filled in every stance.</summary>
+            public readonly HostileSet Hostile = new();
 
             /// <summary>Fork v12: decides when the guard plan is made, kept, carried on or dropped (Core/PlanScheduler.cs).</summary>
             public readonly PlanScheduler Schedule = new();
@@ -377,14 +384,79 @@ namespace MiyakoCarryService.Client.C2Sain
         }
 
         /// <summary>
-        /// Fork v11: whether a Passive squad may fight now (Core/Stance.cs, PassiveGate). Ticks the squad
-        /// first when a tick is due. True when the squad is unknown, so a fault never silences a bot.
+        /// Fork v11 (called IsPassiveReleased before fork v18): whether a Reactive squad may fight now (Core/Stance.cs,
+        /// ReactiveGate). Ticks the squad first when a tick is due. True when the squad is unknown, so a fault never
+        /// silences a bot.
         /// </summary>
         /// <param name="lead">The player's MCS lead object.</param>
-        public static bool IsPassiveReleased(McsAILeadPlayer lead)
+        public static bool IsReactiveReleased(McsAILeadPlayer lead)
         {
             var entry = GetEntry(lead);
-            return entry == null || entry.Passive.Released;
+            return entry == null || entry.Reactive.Released;
+        }
+
+        /// <summary>
+        /// Fork v18: records that an enemy attacked the squad first (it hit a carry bot or the player, or its bullet landed near
+        /// either), so the new Passive stance may fire at it from now until the raid ends. The first cause is kept. Does not tick
+        /// the squad. With "Debug: diagnostic log" on, the first marking of each enemy writes "passive: &lt;enemy&gt; is hostile:
+        /// hit bot|hit you|shot near bot|shot near you". Called whatever the stance, so an enemy that attacked before the switch
+        /// to Passive is still hostile.
+        /// </summary>
+        /// <param name="lead">The player's MCS lead object; null marks nothing.</param>
+        /// <param name="enemyProfileId">The enemy's profile id.</param>
+        /// <param name="enemyName">The enemy's name, for the log line.</param>
+        /// <param name="cause">What the enemy did.</param>
+        public static void MarkHostile(McsAILeadPlayer lead, string enemyProfileId, string enemyName, HostileCause cause)
+        {
+            try
+            {
+                var player = lead?.McsLeadPlayer;
+                if (player == null || string.IsNullOrEmpty(enemyProfileId))
+                {
+                    return;
+                }
+                var id = player.ProfileId;
+                if (!_entries.TryGetValue(id, out var entry))
+                {
+                    entry = new Entry();
+                    _entries[id] = entry;
+                }
+                if (entry.Hostile.Mark(enemyProfileId, cause) && ForkConfig.DebugLog?.Value == true)
+                {
+                    var what = cause switch
+                    {
+                        HostileCause.HitBot => "hit bot",
+                        HostileCause.HitPlayer => "hit you",
+                        HostileCause.ShotNearBot => "shot near bot",
+                        _ => "shot near you",
+                    };
+                    McsLogger.LogInfo($"[{ForkLog.Tag}] passive: {enemyName} is hostile: {what}");
+                }
+            }
+            catch (System.Exception e)
+            {
+                // Called from the game's damage and hit-effect code: noting an attacker must never break either. Logged at most once.
+                if (!_loggedHostileFault)
+                {
+                    _loggedHostileFault = true;
+                    McsLogger.LogError(e);
+                }
+            }
+        }
+
+        /// <summary>True once a fault in <see cref="MarkHostile"/> was logged (the first only).</summary>
+        private static bool _loggedHostileFault;
+
+        /// <summary>
+        /// Fork v18: whether an enemy attacked the squad first (<see cref="MarkHostile"/>). Does not tick the squad and creates
+        /// nothing. False when the squad or the enemy is unknown.
+        /// </summary>
+        /// <param name="lead">The player's MCS lead object.</param>
+        /// <param name="enemyProfileId">The enemy's profile id.</param>
+        public static bool IsHostile(McsAILeadPlayer lead, string enemyProfileId)
+        {
+            var player = lead?.McsLeadPlayer;
+            return player != null && _entries.TryGetValue(player.ProfileId, out var entry) && entry.Hostile.IsHostile(enemyProfileId);
         }
 
         /// <summary>True while the squad has a Defend Me zone, in combat or not.</summary>
@@ -822,18 +894,19 @@ namespace MiyakoCarryService.Client.C2Sain
             {
                 McsLogger.LogInfo($"[{ForkLog.Tag}] squad of {player.Profile?.Nickname}: {before} -> {after}");
             }
-            TickPassive(entry, lead, player, after == TeamMode.Combat, now);
+            TickReactive(entry, lead, player, after == TeamMode.Combat, now);
         }
 
         /// <summary>
-        /// Fork v11: updates the squad's Passive gate after the machine's tick, and with "Debug:
-        /// diagnostic log" on logs its release and its return to holding fire while any carry bot is
-        /// Passive. Tracked whatever the stance, so a switch to Passive mid-fight keeps fighting.
+        /// Fork v11 (called TickPassive before fork v18): updates the squad's Reactive gate after the machine's tick, and with
+        /// "Debug: diagnostic log" on logs its release and its return to holding fire while any carry bot is Reactive. Tracked
+        /// whatever the stance, so a switch to Reactive mid-fight keeps fighting. Since fork v18 the lines read "reactive: ...";
+        /// builds before it wrote "passive: ..." for the same two events.
         /// </summary>
-        private static void TickPassive(Entry entry, McsAILeadPlayer lead, Player player, bool inCombat, float now)
+        private static void TickReactive(Entry entry, McsAILeadPlayer lead, Player player, bool inCombat, float now)
         {
             var botShotAt = false;
-            var anyPassive = false;
+            var anyReactive = false;
             foreach (var member in McsMgr.GetAllAliveMcsSquadMembersByMcsLeadId(player.ProfileId))
             {
                 var data = member?.AIData?.BotOwner?.GetMcsBotPlayerData();
@@ -841,27 +914,27 @@ namespace MiyakoCarryService.Client.C2Sain
                 {
                     continue;
                 }
-                botShotAt |= SainBridge.IsUnderFire(data, now, PASSIVE_EVENT_WINDOW);
-                anyPassive |= EngageTactics.CurrentStance(data.Fork) == CarryStance.Passive;
+                botShotAt |= SainBridge.IsUnderFire(data, now, REACTIVE_EVENT_WINDOW);
+                anyReactive |= StanceRules.HoldsFireUntilReleased(EngageTactics.CurrentStance(data.Fork));
             }
-            var playerShotAt = lead.LastLeadAttackerPlayer != null && now - lead.LastLeadAttackerTime <= PASSIVE_EVENT_WINDOW;
-            var playerFired = now - lead.LastLeadEngageShotTime <= PASSIVE_EVENT_WINDOW;
-            _stanceSettings.PassiveEngagesWhenPlayerShoots = ForkConfig.PassiveEngagesWhenYouShoot?.Value ?? true;
+            var playerShotAt = lead.LastLeadAttackerPlayer != null && now - lead.LastLeadAttackerTime <= REACTIVE_EVENT_WINDOW;
+            var playerFired = now - lead.LastLeadEngageShotTime <= REACTIVE_EVENT_WINDOW;
+            _stanceSettings.ReactiveEngagesWhenPlayerShoots = ForkConfig.PassiveEngagesWhenYouShoot?.Value ?? true;
 
-            var change = entry.Passive.Update(inCombat, botShotAt, playerShotAt, playerFired, _stanceSettings);
-            if (change == PassiveEvent.None || !anyPassive || ForkConfig.DebugLog?.Value != true)
+            var change = entry.Reactive.Update(inCombat, botShotAt, playerShotAt, playerFired, _stanceSettings);
+            if (change == ReactiveEvent.None || !anyReactive || ForkConfig.DebugLog?.Value != true)
             {
                 return;
             }
-            var why = entry.Passive.Cause switch
+            var why = entry.Reactive.Cause switch
             {
-                PassiveCause.BotShotAt => "a carry bot was shot at",
-                PassiveCause.PlayerShotAt => "you were hit",
+                ReactiveCause.BotShotAt => "a carry bot was shot at",
+                ReactiveCause.PlayerShotAt => "you were hit",
                 _ => "you fired at an enemy",
             };
-            McsLogger.LogInfo(change == PassiveEvent.Released
-                ? $"[{ForkLog.Tag}] passive: squad of {player.Profile?.Nickname} released to fight ({why})"
-                : $"[{ForkLog.Tag}] passive: squad of {player.Profile?.Nickname} holding fire again (combat over)");
+            McsLogger.LogInfo(change == ReactiveEvent.Released
+                ? $"[{ForkLog.Tag}] reactive: squad of {player.Profile?.Nickname} released to fight ({why})"
+                : $"[{ForkLog.Tag}] reactive: squad of {player.Profile?.Nickname} holding fire again (combat over)");
         }
 
         /// <summary>Remembers where the squad's threat is.</summary>

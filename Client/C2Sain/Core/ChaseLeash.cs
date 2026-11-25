@@ -12,10 +12,11 @@
 //     ReturnRadius of the player.
 //   - A grace period (after a Break off or Regroup recall ends, arrived or not) vetoes chases too.
 // Since fork v11 the leash depends on the bot's stance (Core/Stance.cs, StanceRules.ApplyLeash):
-//   - Passive and Defensive keep the timed rules above (RangeLimit 0).
+//   - Reactive (called Passive before fork v18) and Defensive keep the timed rules above (RangeLimit 0).
 //   - Aggressive (RangeLimit > 0): chasing is free within RangeLimit metres of the player; past it the
 //     chase is cut and chases stay vetoed until the bot is back within ReturnShare of the range.
 //   - Hyper-aggressive (RangeLimit infinite): no limit.
+//   - Passive (fork v18, NoChase): every chase is vetoed, always; nothing is timed.
 //   The grace period applies in every stance.
 
 using System;
@@ -42,6 +43,12 @@ namespace MiyakoCarryService.Client.C2Sain.Core
 
         /// <summary>Fork v11, range leash: a cut chase stays vetoed until the bot is within this share of RangeLimit.</summary>
         public float ReturnShare = 0.5f;
+
+        /// <summary>
+        /// Fork v18: true for the new Passive stance, whose bots never chase. Every chase decision is vetoed, whatever the
+        /// distance, the time or the grace; RangeLimit and the timed rules are not consulted. Set per bot from its stance.
+        /// </summary>
+        public bool NoChase;
     }
 
     /// <summary>Per-bot chase timer. Main-thread only.</summary>
@@ -136,6 +143,13 @@ namespace MiyakoCarryService.Client.C2Sain.Core
         /// <returns>True when the chase decision must be replaced.</returns>
         public bool ShouldVeto(float now, bool isChase, int knownEnemies, float distanceToPlayer, ChaseLeashSettings settings)
         {
+            if (settings.NoChase)
+            {
+                // Fork v18, the new Passive: no chase is ever allowed, so none is timed; the return state is left as it was.
+                _chaseStart = -1f;
+                return isChase;
+            }
+
             if (settings.RangeLimit > 0f)
             {
                 return RangeVeto(now, isChase, distanceToPlayer, settings);

@@ -59,6 +59,9 @@ namespace MiyakoCarryService.Client.Mgrs
             CommandUtils.RegisterCommandHandler(ECommandType.StanceDefensive.ToString(), C2Sain.ForkCommands.StanceDefensive);
             CommandUtils.RegisterCommandHandler(ECommandType.StanceAggressive.ToString(), C2Sain.ForkCommands.StanceAggressive);
             CommandUtils.RegisterCommandHandler(ECommandType.StanceHyperAggressive.ToString(), C2Sain.ForkCommands.StanceHyperAggressive);
+            // Fork v18: Reactive is the v11 Passive; Passive is the new range-limited stance.
+            CommandUtils.RegisterCommandHandler(ECommandType.TeamStanceReactive.ToString(), C2Sain.ForkCommands.TeamStanceReactive);
+            CommandUtils.RegisterCommandHandler(ECommandType.StanceReactive.ToString(), C2Sain.ForkCommands.StanceReactive);
 #if DEBUG
             CommandUtils.RegisterCommandHandler(ECommandType.DebugSpawnAI.ToString(), DebugSpawnAICommandAction);
             CommandUtils.RegisterCommandHandler(ECommandType.DebugTeleport.ToString(), DebugTeleportCommandAction);
@@ -232,15 +235,17 @@ namespace MiyakoCarryService.Client.Mgrs
         }
 
         /// <summary>
-        /// Fork v11: the four stances. From the Team menu (<paramref name="isTeam"/>) each sets the squad
-        /// stance, which is saved and carries over to the next raid; from a bot's own menu, that bot's
-        /// stance for this raid.
+        /// Fork v11 (four stances; five since fork v18, which added Reactive beside Passive). From the Team menu
+        /// (<paramref name="isTeam"/>) each sets the squad stance, which is saved and carries over to the next raid; from a bot's
+        /// own menu, that bot's stance for this raid. The menu lists Passive, Reactive, Defensive, Aggressive, Hyper-aggressive.
         /// </summary>
         public virtual void BuildStanceMenu(McsCommandMenu menu, Player[] mcsBotPlayers, bool isTeam)
         {
             var prefix = isTeam ? "Team" : "";
             menu.RegisterCommand(C2Sain.ForkText.Get("McsFork/StancePassive Name"), $"McsFork/{prefix}StancePassive TargetName",
                 (isTeam ? ECommandType.TeamStancePassive : ECommandType.StancePassive).ToString(), mcsBotPlayers, shouldCheckExclude: isTeam);
+            menu.RegisterCommand(C2Sain.ForkText.Get("McsFork/StanceReactive Name"), $"McsFork/{prefix}StanceReactive TargetName",
+                (isTeam ? ECommandType.TeamStanceReactive : ECommandType.StanceReactive).ToString(), mcsBotPlayers, shouldCheckExclude: isTeam);
             menu.RegisterCommand(C2Sain.ForkText.Get("McsFork/StanceDefensive Name"), $"McsFork/{prefix}StanceDefensive TargetName",
                 (isTeam ? ECommandType.TeamStanceDefensive : ECommandType.StanceDefensive).ToString(), mcsBotPlayers, shouldCheckExclude: isTeam);
             menu.RegisterCommand(C2Sain.ForkText.Get("McsFork/StanceAggressive Name"), $"McsFork/{prefix}StanceAggressive TargetName",

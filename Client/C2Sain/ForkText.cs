@@ -52,11 +52,13 @@ namespace MiyakoCarryService.Client.C2Sain
             ["McsFork/BreakOffGrace Key"] = "Break off: no-chase time (s)",
             ["McsFork/BreakOffGrace Description"] = "After a Break off or Regroup brings a bot back, or gives up on it, it may not chase or flank for this long, so it does not run straight back out; it still shoots from where it stands. Default 30 (it was 10 before build 17). Higher keeps it out of the fight longer; 0 lets it go straight back.",
             ["McsFork/Stance Key"] = "Stance: squad stance",
-            ["McsFork/Stance Description"] = "How the carry bots fight. Default Defensive. Choosing a stance from the Team ▸ Combat ▸ Stance menu changes this setting, so the squad keeps it next raid; a stance given to one bot from its own menu lasts only for that raid.\n- Passive: hold fire and let enemies pass until a bot or you is shot at (or you fire, see below); then fight as Defensive until the fight ends.\n- Defensive: stay close to you, prefer cover, fight at range, chase only briefly (the Leash settings). No grenades.\n- Aggressive: push and flank with covering fire, chase up to the Aggressive leash, use grenades.\n- Hyper-aggressive: charge the enemy with no leash, use grenades. Expect them to leave you behind.",
-            ["McsFork/PassiveEngagesWhenYouShoot Key"] = "Stance: Passive fights when you shoot",
-            ["McsFork/PassiveEngagesWhenYouShoot Description"] = "In the Passive stance, whether you firing at an enemy releases the squad to fight, as well as a bot or you being shot at. Default on. Off keeps them quiet even after you open fire, until someone is shot at.",
+            ["McsFork/Stance Description"] = "How the carry bots fight. Default Defensive. Choosing a stance from the Team ▸ Combat ▸ Stance menu changes this setting, so the squad keeps it next raid; a stance given to one bot from its own menu lasts only for that raid.\n- Passive: never fire at an enemy farther away than the Passive range, even when it shoots at you; within the range, fire only at an enemy that has already attacked you or them (hit one of you, or shot near one of you). Never chase, flank, suppress or throw grenades. Good for picking your own targets, or avoiding fights.\n- Reactive: hold fire and let enemies pass until a bot or you is shot at (or you fire, see below); then fight as Defensive until the fight ends. This is what Passive was before build 18.\n- Defensive: stay close to you, prefer cover, fight at range, chase only briefly (the Leash settings). No grenades.\n- Aggressive: push and flank with covering fire, chase up to the Aggressive leash, use grenades.\n- Hyper-aggressive: charge the enemy with no leash, use grenades. Expect them to leave you behind.",
+            ["McsFork/PassiveEngagesWhenYouShoot Key"] = "Stance: Reactive fights when you shoot",
+            ["McsFork/PassiveEngagesWhenYouShoot Description"] = "In the Reactive stance, whether you firing at an enemy releases the squad to fight, as well as a bot or you being shot at. Default on. Off keeps them quiet even after you open fire, until someone is shot at. The Passive stance ignores your own shots. (The setting keeps its old name so your saved value carries over.)",
+            ["McsFork/PassiveRange Key"] = "Stance: Passive firing range (m)",
+            ["McsFork/PassiveRange Description"] = "In the Passive stance, carry bots never fire at an enemy farther from them than this, even when that enemy is shooting at you. Within it they fire only at an enemy that has already attacked you or them. Default 15; from 5 to 100. Higher lets them answer an attacker from farther away, so they are more likely to take a kill you wanted; lower keeps them quiet until an attacker is close. Only the Passive stance uses it.",
             ["McsFork/AggressiveLeash Key"] = "Stance: Aggressive leash (m)",
-            ["McsFork/AggressiveLeash Description"] = "In the Aggressive stance, bots chase and flank freely within this distance of you; one that stays past it for 2 s is called back to within half of it (a leash recall), and flank legs are planned only within 0.8 of it. Default 100. Higher lets them pursue further and leaves you more alone; lower keeps them closer but lets enemies slip away. Passive and Defensive use the Leash settings above; Hyper-aggressive has no limit.",
+            ["McsFork/AggressiveLeash Description"] = "In the Aggressive stance, bots chase and flank freely within this distance of you; one that stays past it for 2 s is called back to within half of it (a leash recall), and flank legs are planned only within 0.8 of it. Default 100. Higher lets them pursue further and leaves you more alone; lower keeps them closer but lets enemies slip away. Reactive and Defensive use the Leash settings above; Passive never chases; Hyper-aggressive has no limit.",
             ["McsFork/EngageFlanking Key"] = "Stance: Aggressive flanking",
             ["McsFork/EngageFlanking Description"] = "In the Aggressive stance, bots go around the side of the enemy's last known position before they search it; with two or more Aggressive bots, one stays back to give covering fire. Default on. Off makes them push straight in.",
             ["McsFork/RecklessStyle Key"] = "Stance: Hyper-aggressive personality",
@@ -143,7 +145,7 @@ namespace MiyakoCarryService.Client.C2Sain
             ["McsFork/CostThreshold Key"] = "Timing: log frames over (ms)",
             ["McsFork/CostThreshold Description"] = "A frame is written to the log when the timed fork work in it adds up to this many milliseconds or more. Default 2. Lower logs more frames and makes a longer log; the summary at raid end counts every timed frame whatever this is.",
             ["McsFork/DebugLog Key"] = "Debug: diagnostic log",
-            ["McsFork/DebugLog Description"] = "Write what the carry bots decide to BepInEx\\LogOutput.log, each line stamped with the raid clock (minutes:seconds since the raid started, the same clock Raid Review uses): every change of each bot's brain layer and SAIN's decision, squad mode changes, cut chases, contact reports, stance changes, Passive holding and releasing fire, held grenade throws, every guard and Defend plan with each bot's spot, its cover and how long the plan took, bots stopping short of their spot, any bot that has stood still in the open for 5 s or kept looking the same way for 8 s, each enemy a bot heard but could not see, deaths, each item a bot goes to loot by itself, each time a bot stands still for 3 s on its walk to you (with what its mover was doing and which speed rule it was under), each teleport of a bot (MCS's own after 30 s, each Force Teleport command and each catch-up teleport), each Break off, Regroup or leash recall (started, finished, given up on or cancelled), each stranded bot put back on the walkable ground, and a line every 2 s for a bot more than 12 m behind you on its walk to you. Also the frames where the fork's own work was heavy, for whichever \"Timing:\" settings are on, with a summary when the raid ends. Several hundred lines a raid. Turn it on when you want to report a problem. Default off.",
+            ["McsFork/DebugLog Description"] = "Write what the carry bots decide to BepInEx\\LogOutput.log, each line stamped with the raid clock (minutes:seconds since the raid started, the same clock Raid Review uses): every change of each bot's brain layer and SAIN's decision, squad mode changes, cut chases, contact reports, stance changes, Reactive holding and releasing fire, the Passive stance's hostile enemies and the fire it held or opened, held grenade throws, every guard and Defend plan with each bot's spot, its cover and how long the plan took, bots stopping short of their spot, any bot that has stood still in the open for 5 s or kept looking the same way for 8 s, each enemy a bot heard but could not see, deaths, each item a bot goes to loot by itself, each time a bot stands still for 3 s on its walk to you (with what its mover was doing and which speed rule it was under), each teleport of a bot (MCS's own after 30 s, each Force Teleport command and each catch-up teleport), each Break off, Regroup or leash recall (started, finished, given up on or cancelled), each stranded bot put back on the walkable ground, and a line every 2 s for a bot more than 12 m behind you on its walk to you. Also the frames where the fork's own work was heavy, for whichever \"Timing:\" settings are on, with a summary when the raid ends. Several hundred lines a raid. Turn it on when you want to report a problem. Default off.",
 
             // Commands.
             ["McsFork/BreakOff Name"] = "Break off from combat",
@@ -162,14 +164,17 @@ namespace MiyakoCarryService.Client.C2Sain
             ["McsFork/Stance Name"] = "Stance",
             ["McsFork/Stance TargetName"] = "How this carry service player fights, for this raid only.",
             ["McsFork/StancePassive Name"] = "Passive",
+            ["McsFork/StanceReactive Name"] = "Reactive",
             ["McsFork/StanceDefensive Name"] = "Defensive",
             ["McsFork/StanceAggressive Name"] = "Aggressive",
             ["McsFork/StanceHyperAggressive Name"] = "Hyper-aggressive",
-            ["McsFork/TeamStancePassive TargetName"] = "Hold fire and let enemies pass until one of you is shot at.",
+            ["McsFork/TeamStancePassive TargetName"] = "Never fire past the Passive range (15 m unless you changed it), even when shot at. Within it, fire only at an enemy that attacked first. Never chase or throw grenades.",
+            ["McsFork/TeamStanceReactive TargetName"] = "Hold fire and let enemies pass until one of you is shot at.",
             ["McsFork/TeamStanceDefensive TargetName"] = "Stay close, prefer cover, fight at range. No grenades. The default.",
             ["McsFork/TeamStanceAggressive TargetName"] = "Push and flank with covering fire, chase up to the Aggressive leash, use grenades.",
             ["McsFork/TeamStanceHyperAggressive TargetName"] = "Charge the enemy with no leash and use grenades. They will leave you behind.",
-            ["McsFork/StancePassive TargetName"] = "This carry service player holds fire and lets enemies pass until one of you is shot at.",
+            ["McsFork/StancePassive TargetName"] = "This carry service player never fires past the Passive range (15 m unless you changed it), even when shot at. Within it, it fires only at an enemy that attacked first. It never chases or throws grenades.",
+            ["McsFork/StanceReactive TargetName"] = "This carry service player holds fire and lets enemies pass until one of you is shot at.",
             ["McsFork/StanceDefensive TargetName"] = "This carry service player stays close, prefers cover and fights at range. No grenades.",
             ["McsFork/StanceAggressive TargetName"] = "This carry service player pushes and flanks, chases up to the Aggressive leash, and uses grenades.",
             ["McsFork/StanceHyperAggressive TargetName"] = "This carry service player charges the enemy with no leash and uses grenades.",
@@ -204,7 +209,8 @@ namespace MiyakoCarryService.Client.C2Sain
             ["McsFork/FlankLeft"] = "Flanking left!",
             ["McsFork/FlankRight"] = "Flanking right!",
             ["McsFork/CoveringFire"] = "Covering fire!",
-            ["McsFork/StancePassiveAck"] = "Copy, holding fire unless engaged.",
+            ["McsFork/StancePassiveAck"] = "Copy, holding fire past 15 metres, only firing back up close.", // Fork v18: ForkCommands.SetStance overrides it with the real range.
+            ["McsFork/StanceReactiveAck"] = "Copy, holding fire unless engaged.",
             ["McsFork/StanceDefensiveAck"] = "Copy, staying defensive.",
             ["McsFork/StanceAggressiveAck"] = "Copy, going aggressive.",
             ["McsFork/StanceHyperAggressiveAck"] = "Copy, all-out attack!",
@@ -212,6 +218,17 @@ namespace MiyakoCarryService.Client.C2Sain
             ["McsFork/WatchingSpot"] = "Copy, watching that spot.",
             ["McsFork/DefendingYou"] = "Copy, staying on you.",
         };
+
+        /// <summary>
+        /// Fork v18: replaces the text of a fork string at run time, for a reply that carries a setting's value (the Passive stance's
+        /// acknowledgement names its range). The new text stays until the next call; main thread only.
+        /// </summary>
+        /// <param name="id">The key to change.</param>
+        /// <param name="text">The English text.</param>
+        public static void Override(string id, string text)
+        {
+            _text[id] = text;
+        }
 
         /// <summary>Looks up a fork string.</summary>
         /// <param name="id">The key; null is allowed and never matches.</param>

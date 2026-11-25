@@ -5,7 +5,7 @@
 // whether to throw at an enemy; GetDecision itself starts the throw (TryThrowGrenade, then the game's
 // BotGrenadeController.DoThrow), so answering false here stops the throw before it begins. Checked in
 // SAIN 4.5.1 with cecil_il.ps1 (-FindCall GrenadeThrowDecider:: and BotGrenadeController::): no other
-// SAIN path calls DoThrow. For carry bots whose stance forbids grenades (Passive and Defensive,
+// SAIN path calls DoThrow. For carry bots whose stance forbids grenades (Passive, Reactive and Defensive,
 // Core/Stance.cs) it answers false with the reason "fork: no grenades in this stance"; other bots and
 // stances pass through untouched. With "Debug: diagnostic log" on it logs the first blocked throw per
 // bot per stance. Any exception is logged once and swallowed, so a fork bug degrades to SAIN's own

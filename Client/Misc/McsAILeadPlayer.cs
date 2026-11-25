@@ -172,6 +172,8 @@ namespace MiyakoCarryService.Client.Misc
 
             LastLeadAttackerPlayer = attacker;
             LastLeadAttackerTime = Time.time;
+            // Fork v18: whoever hits the player has attacked the squad first (the new Passive stance may fire back at it).
+            C2Sain.TeamModes.MarkHostile(this, attacker.ProfileId, attacker.Profile?.Nickname, C2Sain.Core.HostileCause.HitPlayer);
         }
 
         public void MarkLeadAimingEnemy(Player aimingEnemy)

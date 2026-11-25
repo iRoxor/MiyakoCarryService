@@ -43,6 +43,7 @@ namespace MiyakoCarryService.Client.C2Sain
         public static ConfigEntry<float> BreakOffGrace;
         public static ConfigEntry<Core.CarryStance> Stance;
         public static ConfigEntry<bool> PassiveEngagesWhenYouShoot;
+        public static ConfigEntry<float> PassiveRange;
         public static ConfigEntry<float> AggressiveLeash;
         public static ConfigEntry<bool> EngageFlanking;
         public static ConfigEntry<ERecklessStyle> RecklessStyle;
@@ -136,7 +137,11 @@ namespace MiyakoCarryService.Client.C2Sain
             // Fork v11: the stances replace AllowedPersonalities, EngageMax and ReportEngages (their old
             // entries stay in the file, unread). The Team stance commands write Stance, so it carries over.
             Stance = Enum(plugin, "Stance", Core.CarryStance.Defensive);
+            // Fork v18: the v11 Passive is now called Reactive, and PassiveEngagesWhenYouShoot keeps its key so a saved value carries
+            // over (it is Reactive's setting; its text says so). PassiveRange belongs to the new Passive stance. MigrateDefaults moves
+            // a Passive saved by fork v17 or earlier to Reactive.
             PassiveEngagesWhenYouShoot = Bool(plugin, "PassiveEngagesWhenYouShoot", true);
+            PassiveRange = Float(plugin, "PassiveRange", 15f, 5f, 100f);
             AggressiveLeash = Float(plugin, "AggressiveLeash", 100f, 20f, 300f);
             EngageFlanking = Bool(plugin, "EngageFlanking", true);
             RecklessStyle = Enum(plugin, "RecklessStyle", ERecklessStyle.Random);
@@ -189,8 +194,12 @@ namespace MiyakoCarryService.Client.C2Sain
             MigrateDefaults();
         }
 
-        /// <summary>The settings version this build writes into the hidden SettingsVersion entry; raise it when a default changes.</summary>
-        private const int SETTINGS_VERSION = 15;
+        /// <summary>
+        /// The settings version this build writes into the hidden SettingsVersion entry; raise it when a default changes. Never
+        /// below Core.StanceMigration.PassiveSplitVersion (16): the move of a saved Passive to Reactive runs when the file's version
+        /// is below that.
+        /// </summary>
+        private const int SETTINGS_VERSION = 16;
 
         /// <summary>
         /// BepInEx keeps the value already in the config file when a build changes a setting's default, so a new default
@@ -200,7 +209,9 @@ namespace MiyakoCarryService.Client.C2Sain
         /// 3 to 12 (the strobe was too dim) and StrobeThermalPeriod 2 to 1 (the pole's patterns read better quicker).
         /// Fork v17 (version 15): BreakOffGrace 10 to 30 (a recall's no-chase and no-flank time; the user's 2026-11-24 report was
         /// that bots went straight back into the fight after Break off and Regroup). The steps run in order, so a file still at
-        /// version 13 or lower gets all of them. A user who had set exactly the old value by choice sees it change once. Side
+        /// version 13 or lower gets all of them. A user who had set exactly the old value by choice sees it change once.
+        /// Fork v18 (version 16): a saved Stance of Passive becomes Reactive (Core.StanceMigration), because the name Passive now
+        /// belongs to a new stance and the v17 Passive is Reactive; a Passive saved at version 16 or later stays. Side
         /// effect: writes the config file when it moves a value, and records the version in the hidden SettingsVersion entry.
         /// Called at the end of <see cref="Bind"/>.
         /// </summary>
@@ -215,7 +226,14 @@ namespace MiyakoCarryService.Client.C2Sain
                 MoveDefault(IrBrightness, 3f, 12f);
                 MoveDefault(StrobeThermalPeriod, 2f, 1f);
             }
-            MoveDefault(BreakOffGrace, 10f, 30f);
+            if (SettingsVersion.Value < 15)
+            {
+                MoveDefault(BreakOffGrace, 10f, 30f);
+            }
+            if (SettingsVersion.Value < Core.StanceMigration.PassiveSplitVersion)
+            {
+                Stance.Value = Core.StanceMigration.Migrate(Stance.Value, SettingsVersion.Value);
+            }
             SettingsVersion.Value = SETTINGS_VERSION;
         }
 

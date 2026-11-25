@@ -838,11 +838,115 @@ namespace MiyakoCarryService.Client.C2Sain
         ///    Gates that cannot see the game (what the harness does not reach): the navmesh queries, the teleport's mover calls, SAIN's search
         ///    stop and the brain layer hook run only in the game; TEST-BUILD-17.md lists what to watch for.
         ///    Measured: nothing yet (no raid has run v17).
+        /// 18 (2026-11-25) Test build 18: a new Passive stance that never fires past a set range, and the old Passive renamed Reactive.
+        ///    Built on build 17 (commit 0977c780) from miyako-carry-service/PLAN-BUILD-18.md (the bot behavior session's plan, written from
+        ///    the user's request and answers of 2026-11-24). Following, recalls, the leash, the markers, the guard planner and Defend Me are
+        ///    untouched; Defensive, Aggressive and Hyper-aggressive behave as in build 17.
+        ///    The user's request (2026-11-24): "There's also the need for a new Settings command to make it so that the MCS bots cannot shoot
+        ///    at enemies that are more than 15m away. There are more than a handful of quests where I need to selectively kill specific
+        ///    targets and sometimes leave others alone, and when the Carry Bots take measures into their own hands, it causes me to lose out
+        ///    on opportunities. One of the raids that should have been recorded was one on Reserve where I was trying to snipe enemies from
+        ///    afar, and one of the Carry Bots stole a kill from me. Or, sometimes I just want to avoid combat altogether for a bit such as
+        ///    if the raid timer is counting down and we need to get to extract immediately or if we're contributing to a fight that's not
+        ///    worth the time."
+        ///    Their answers: (1) beyond the range, even when shot at: "Never beyond the limit" (bots may take cover but never shoot past
+        ///    it); (2) it is a stance, chosen from Team > Combat > Stance, and "Rename the current 'Passive' to 'Reactive'"; (3) when shot
+        ///    at, the new Passive never fires until the user changes stance, except as (4) says; (4) within the range, "Shoot only if it
+        ///    attacks first".
+        ///    Measured before it: nothing; this is a feature, not a fix. The two checks the plan asked for, read in SAIN 4.5.1 with
+        ///    cecil_il.ps1 and il_dump.py on 2026-11-25:
+        ///    - SAIN's SeekCover DOES fire at a visible enemy: SeekCoverAction.OnSteeringTicked calls SAINShootData.ShootAnyVisibleEnemies
+        ///      (and SAINBotSuppressClass.TrySuppressAnyEnemy) on every steering tick, so the bot shoots while it runs to cover. So SeekCover
+        ///      is never passed for an out-of-bounds enemy: that bot gets None and takes cover only through the Guard layer (in Combat the
+        ///      guard planner picks covered posts facing the contact). More: ShootAnyVisibleEnemies tries the decision's enemy and then ANY
+        ///      other enemy that has been visible for 0.33 s (CheckEnemiesForShootableTargets), and ShiftCoverAction picks its cover point
+        ///      after the decision, in its own Update. A decision about one enemy therefore cannot stop a shot at another, and ShiftCover's
+        ///      target cannot be read when the decision is made (the plan's "if it cannot be read, veto ShiftCover").
+        ///    - No fork layer fires on its own while Passive holds, with two exceptions that are now gated. The Guard layer's two logics
+        ///      (GuardMoveLogic, GuardWatchLogic) walk and look and call no firing code. McsBrainLayer's fight branch runs only for a bot SAIN
+        ///      does not manage (SainBridge.GetSain is null) and fires through MCS's logics; escort walks; the C2 layer holds a bot in Combat
+        ///      only for a recall (a walk). The exceptions: the fight branch for a bot without SAIN, and the stationary-weapon branch
+        ///      (ShootFromStationaryLogic), which fires at the goal enemy: both now ask HoldFireGate.Allows.
+        ///    Changed (logic in Core/HoldFire.cs, Stance.cs and ChaseLeash.cs, which the harness drives):
+        ///    A. The stances: CarryStance is Passive (new), Reactive, Defensive, Aggressive, HyperAggressive, in that order (the settings
+        ///       drop-down shows it). Reactive is exactly build 17's Passive, renamed with its gate (ReactiveGate, ReactiveEvent,
+        ///       ReactiveCause, TeamModes.IsReactiveReleased); the harness drives it beside a frozen copy of v17's PassiveGate through every
+        ///       sequence of four inputs and requires identical results. A new leash kind, StanceLeash.NoChase (ChaseLeashSettings.NoChase),
+        ///       vetoes every chase for Passive.
+        ///    B. The new Passive's rule (HoldFireRules.MayEngage): a bot may fire at an enemy only if it is HOSTILE and within the Passive
+        ///       range of the bot (a distance equal to the range counts as within). An enemy becomes hostile to the squad for the rest of the
+        ///       raid (a HostileSet per squad in TeamModes, filled in every stance, so one that attacked before the switch still counts)
+        ///       when it hits a carry bot (ApplyDamagePatch), hits the player (McsAILeadPlayer.MarkLeadAttacker, which the player's hit
+        ///       event already calls), or when its bullet lands near a carry bot (PlayHitEffectPatch, as before) or near the player (new
+        ///       there: the same distance, the squad's "bullet feel close" setting, up to 30 m). The player's own shots change nothing.
+        ///    C. The decisions (DecisionPolicy.ApplyPassive, HoldFireRules.Judge): an enemy that is missing, beyond the range or not hostile
+        ///       makes both SAIN decisions None ("passive: beyond 15 m", "passive: not hostile", "passive: no enemy" in the overlay). An enemy
+        ///       that is allowed keeps its StandAndShoot, ShootDistantEnemy, SeekCover and the evasive decisions, loses its grenade throw
+        ///       (StandAndShoot or SeekCover instead), every chase (RushEnemy, Search, MoveToEngage, CreepOnEnemy; the squad's GroupSearch,
+        ///       Help, PushSuppressedEnemy, Surround and Search), ShiftCover, and the squad's Suppress. The plan listed no CreepOnEnemy,
+        ///       Surround or squad Search; they move the bot toward the enemy, so they are vetoed too. The rest of the policy (Hold Position,
+        ///       the no-chase leash) still runs after it.
+        ///    D. A per-shot backstop (SainShootGatePatch on SAINShootData.AimAndShootAtEnemy, SainManualShootGatePatch on ManualShootClass.
+        ///       TryShoot; C2Sain/HoldFireGate.cs): because SAIN's shooter picks its own target (above), each shot a Passive carry bot is about
+        ///       to fire is checked on its own, and a suppressive shot is never allowed. This is NOT in the plan; it is what makes "never
+        ///       beyond the range" true when a hostile enemy is close and another one is far. A fault while deciding for a Passive bot blocks
+        ///       the shot; every other bot and stance passes through untouched.
+        ///    E. Settings: "Stance: Passive firing range (m)" (PassiveRange, default 15, range 5-100; only Passive uses it). "Stance: Reactive
+        ///       fights when you shoot" is the old Passive one under the SAME key (PassiveEngagesWhenYouShoot), so a saved value carries over.
+        ///       SETTINGS_VERSION 16: MigrateDefaults turns a Stance saved as Passive by build 17 or earlier into Reactive, once
+        ///       (Core/StanceMigration; a Passive saved at version 16 or later stays). Its BreakOffGrace step (10 to 30) now runs only for a
+        ///       file below version 15, so the new version does not move a value the user set to 10 after build 17.
+        ///    F. Menus: Team > Combat > Stance and each bot's own Stance menu list Passive, Reactive, Defensive, Aggressive,
+        ///       Hyper-aggressive (commands TeamStancePassive/StancePassive for the new one, TeamStanceReactive/StanceReactive for the old;
+        ///       ECommandType gained the last two at the end of the stance group, so no existing value changes number). The new Passive
+        ///       answers "Copy, holding fire past N metres, only firing back up close." with the range in force; Reactive answers with the
+        ///       old Passive text.
+        ///    Deviations from the plan (the bot behavior session should look at them): D above; CreepOnEnemy, Surround and the squad's Search
+        ///    are vetoed as chases; ShiftCover is always vetoed (its target cannot be read at decision time); the stationary-weapon and
+        ///    no-SAIN fight branches are gated; the BreakOffGrace migration step is guarded by version; mcs_follow_stats.py names no stance
+        ///    so only the summary tool changed; mcs_fork_patch_targets.py gained the two new targets and a check that SAIN's decision-enum
+        ///    names match Core's mirrors (DecisionPolicy maps them by name).
+        ///    Diagnostics (diagnostic log; tools/mcs_fork_log_summary.py reads them, and reads a log of v17 or earlier with "Passive" as
+        ///    "Reactive"):
+        ///    - "passive: <enemy> is hostile: hit bot|hit you|shot near bot|shot near you", once per enemy per squad.
+        ///    - "passive: <bot> held fire at <enemy>, N m away (beyond 15 m|not hostile)", at most once per bot and enemy every 10 s.
+        ///    - "passive: <bot> engaged hostile <enemy>, N m away", the first allowed decision against each enemy per bot.
+        ///    - The two lines v11-v17 wrote as "passive: squad of <player> released to fight (<why>)" and "... holding fire again (combat
+        ///      over)" read "reactive: ..." from v18.
+        ///    Records: no log field is repurposed except this one: the line prefix "passive:" meant the v11 stance (Reactive from v18) in
+        ///    v11-v17 logs and means the new stance in v18 logs, and the stance NAME "Passive" in "stance Passive ..." lines, stance orders,
+        ///    changes, "grenade: ... (Passive stance)" and "chase cut ... (Passive)" means the same: tools must read it by the log's own
+        ///    version (mcs_fork_log_summary.py does). No line was removed. The Stance and PassiveEngagesWhenYouShoot setting keys are
+        ///    unchanged.
+        ///    Pooling:
+        ///    - The stance names changed meaning: "Passive" in a v11-v17 log is v18's Reactive. Never pool a stance's counts across that
+        ///      boundary by name alone; map them first (the summary tool does).
+        ///    - Everything measured with Defensive, Aggressive or Hyper-aggressive pools with v17 UNRESTRICTED, as does follow, recall, leash and
+        ///      marker data (those code paths are unchanged).
+        ///    - Raids played in the new Passive measure something no earlier build did: do NOT pool their combat outcomes with anything.
+        ///    Falsifiers (written before any v18 raid):
+        ///    In the new Passive
+        ///    - a carry bot fires at an enemy farther than the Passive range: a carry-bot kill or hit beyond it (Raid Review), or the user
+        ///      seeing it, or a "passive: ... engaged hostile ..." line with a distance past the range;
+        ///    - a carry bot kills or hits an enemy that never attacked the squad (no "is hostile" line for it);
+        ///    - a carry bot chases, flanks, searches, suppresses or throws a grenade;
+        ///    - bots standing in the open while shot at from beyond the range, instead of taking cover: the Guard layer's cover in combat is
+        ///      not enough, and the "held fire" lines and the bots' stand lines say where.
+        ///    Reactive behaving differently from build 17's Passive (the names changed; nothing else should have).
+        ///    The migration: a Passive saved by build 17 that does not come up as Reactive, or a Passive saved by build 18 that turns into
+        ///    Reactive.
+        ///    Errors: any exception naming HoldFire, DecisionPolicy, SainShootGatePatch, SainManualShootGatePatch or the stance commands; a
+        ///    Harmony patch of the two new targets failing to apply (the BepInEx log says so at start).
+        ///    Gates that cannot see the game (what the harness does not reach): the mapping of SAIN's decision names (the patch-target gate
+        ///    compares the names with the installed SAIN), SAIN's own shooter and both Harmony prefixes on it, the damage and bullet hooks
+        ///    that mark enemies hostile, the stationary-weapon and no-SAIN gates and the menus run only in the game; TEST-BUILD-18.md lists
+        ///    what to watch for.
+        ///    Measured: nothing yet (no raid has run v18).
         /// </summary>
-        public const int ForkVersion = 17;
+        public const int ForkVersion = 18;
 
         /// <summary>Short label used in logs and the overlay.</summary>
-        public const string Label = "C2/SAIN fork v17";
+        public const string Label = "C2/SAIN fork v18";
 
         /// <summary>
         /// The assembly's version stamp, "1.1.4.100+&lt;first 8 characters of the commit it was built from&gt;", written into the

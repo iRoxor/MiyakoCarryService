@@ -39,6 +39,10 @@ namespace MiyakoCarryService.Client.Enums
         StanceDefensive,
         StanceAggressive,
         StanceHyperAggressive,
+        // Fork v18: the old Passive is now Reactive (TeamStancePassive and StancePassive are the new Passive). Appended here so no
+        // value above changes number.
+        TeamStanceReactive,
+        StanceReactive,
 #if DEBUG
         DebugSpawnAI,
         DebugTeleport,

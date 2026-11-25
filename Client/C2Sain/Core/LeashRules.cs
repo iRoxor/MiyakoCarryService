@@ -7,8 +7,8 @@
 // logic harness (.for-claude-to-reference/harnesses/mcs_fork_logic) can drive it. Reads and writes no files.
 //
 // "RangeLimit" is the stance's leash range from the player (Core/Stance.cs StanceRules.RangeLimit): 100 m for Aggressive
-// by default, float.PositiveInfinity for Hyper-aggressive (no leash), 0 for Passive and Defensive (the timed leash, which has
-// no range, so none of the range tests below apply).
+// by default, float.PositiveInfinity for Hyper-aggressive (no leash), 0 for Passive (fork v18: no chase at all), Reactive and
+// Defensive (the timed leash, which has no range, so none of the range tests below apply).
 //
 // Why (the user's build 16 raids, 2026-11-24; miyako-carry-service/evidence/2026-11-24-build-16-customs-factory/
 // build-16-analysis.txt, section 5a): an Aggressive bot ran flank legs that began 90 m beyond its last, was 105 m out when

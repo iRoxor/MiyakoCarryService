@@ -260,7 +260,9 @@ namespace MiyakoCarryService.Client
             _patches.Add(new C2Sain.Patches.SainFoliageSightPatch()); // Fork: carry bots see out of their bush.
             _patches.Add(new C2Sain.Patches.SainGunshotRangePatch()); // Fork v8: carry bots ignore distant gunshots.
             _patches.Add(new C2Sain.Patches.SainHeardPatch()); // Fork v8: a carry bot hearing an enemy alerts the squad.
-            _patches.Add(new C2Sain.Patches.SainGrenadePatch()); // Fork v11: no grenades in the Passive and Defensive stances.
+            _patches.Add(new C2Sain.Patches.SainGrenadePatch()); // Fork v11: no grenades in the Passive, Reactive and Defensive stances.
+            _patches.Add(new C2Sain.Patches.SainShootGatePatch()); // Fork v18: the new Passive fires only at hostile enemies within its range.
+            _patches.Add(new C2Sain.Patches.SainManualShootGatePatch()); // Fork v18: ... and never fires suppressively.
 
             if (FikaInstalled)
             {

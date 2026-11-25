@@ -9,7 +9,7 @@
 // bot. Reads and writes no files.
 //
 // Per stance (the user's spec, 2026-11-08, and mapping choice, 2026-11-09):
-//   - Passive and Defensive: SAIN's Normal personality, SAIN's own search delay, no tactics.
+//   - Passive (fork v18), Reactive (the v11 Passive) and Defensive: SAIN's Normal personality, SAIN's own search delay, no tactics.
 //   - Aggressive: Chad (in the user's preset: searches after ~16 s, pushes enemies that are reloading or
 //     hurt), search delay cut to TACTICAL_SEARCH_DELAY, and the tactics the old Engage Enemy ran:
 //       - roles among the squad's Aggressive bots, ordered by profile id: a lone bot flanks (the player
@@ -89,7 +89,7 @@ namespace MiyakoCarryService.Client.C2Sain
 
         /// <summary>
         /// Fork v17: the stance's leash range from the player (m): the "Aggressive: leash" setting for Aggressive, float.PositiveInfinity
-        /// for Hyper-aggressive, 0 for Passive and Defensive (the timed leash). The flank rules, the flank leg's leash test and the
+        /// for Hyper-aggressive, 0 for Passive, Reactive and Defensive (the timed leash; Passive's is the no-chase kind). The flank rules, the flank leg's leash test and the
         /// leash pull (C2Gate) read it.
         /// </summary>
         public static float RangeLimit(CarryStance stance)

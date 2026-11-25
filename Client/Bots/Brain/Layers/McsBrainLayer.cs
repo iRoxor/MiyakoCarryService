@@ -120,8 +120,10 @@ namespace MiyakoCarryService.Client.Bots.Brain.Layers
 
                 var hasTravelTask = McsBotPlayerData.HasAnyIntent(Classification.TravelTaskIntents);
                 // Fork: fighting is SAIN's job. C2 only runs MCS's own fight logic for bots SAIN does not manage.
+                // Fork v18: and a Passive bot fights this way only at a hostile enemy within its range (C2Sain/HoldFireGate.cs).
                 var fightActive = C2Sain.SainBridge.GetSain(BotOwner) == null
-                    && ((goalEnemy != null && time - _lastCanShootTime <= (hasTravelTask ? 2f : 15f)) || IsApproachingThreat());
+                    && ((goalEnemy != null && time - _lastCanShootTime <= (hasTravelTask ? 2f : 15f)) || IsApproachingThreat())
+                    && C2Sain.HoldFireGate.Allows(BotOwner, goalEnemy?.Person);
 
                 ReportFightState(fightActive, time);
 
@@ -331,7 +333,8 @@ namespace MiyakoCarryService.Client.Bots.Brain.Layers
                             if (stationaryWeaponLink.HaveAmmo()
                                 && stationary.GetCurrentDecision() == BotLogicDecision.shootFromStationary
                                 && goalEnemy.CanShoot
-                                && IsTargetPitchReachable(stationaryWeapon, goalEnemy.CurrPosition))
+                                && IsTargetPitchReachable(stationaryWeapon, goalEnemy.CurrPosition)
+                                && C2Sain.HoldFireGate.Allows(BotOwner, goalEnemy.Person)) // Fork v18: a Passive bot fires from the gun only as it fires elsewhere
                             {
                                 if (McsBotPlayerData.HasIntent(Intents.ShouldHoldPosition))
                                 {
